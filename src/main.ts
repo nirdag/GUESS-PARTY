@@ -1,0 +1,764 @@
+import './style.css'
+
+type Role = 'host' | 'player'
+type Screen = 'welcome' | 'lobby' | 'host-round' | 'player-answer' | 'player-guess' | 'leaderboard'
+
+type Player = {
+  id: string
+  name: string
+  score: number
+}
+
+type GuessRecord = {
+  guesserId: string
+  guesserName: string
+  guessedId: string
+  guessedName: string
+  correct: boolean
+  points: number
+}
+
+type RoundResult = {
+  guesserName: string
+  guessedName: string
+  correct: boolean
+  points: number
+}
+
+type RoomState = {
+  code: string
+  phase: 'lobby' | 'answer' | 'guess' | 'leaderboard'
+  roundNumber: number
+  question: string
+  selectedAnswer: string
+  answerAuthorId: string | null
+  activeGuesserIndex: number
+  players: Player[]
+  answers: Array<{ playerId: string; playerName: string; text: string }>
+  guesses: GuessRecord[]
+  roundResults: RoundResult[]
+  hostId: string | null
+  timeLeft: number
+}
+
+const app = document.querySelector<HTMLDivElement>('#app')
+
+if (!app) {
+  throw new Error('App root not found')
+}
+
+const root = app
+
+const state = {
+  screen: 'welcome' as Screen,
+  role: 'host' as Role,
+  roomCode: '',
+  playerName: '',
+  currentPlayerId: '',
+  players: [] as Player[],
+  roundNumber: 0,
+  question: '',
+  selectedAnswer: '',
+  answerAuthorId: null as string | null,
+  activeGuesserIndex: 0,
+  roundResults: [] as RoundResult[],
+  phase: 'lobby' as RoomState['phase'],
+  answers: [] as RoomState['answers'],
+  guesses: [] as GuessRecord[],
+  timeLeft: 0,
+  customQuestion: '',
+  selectedGuessId: null as string | null,
+  hasSubmittedAnswer: false,
+}
+
+let queuedAction: (() => void) | null = null
+
+const socket = new WebSocket(buildSocketUrl())
+
+function buildSocketUrl(): string {
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  const host = window.location.hostname || 'localhost'
+  return `${protocol}://${host}:8080/ws`
+}
+
+function formatScore(value: number): string {
+  return `${value} pts`
+}
+
+function formatPlayerInitials(name: string): string {
+  return name.trim().charAt(0).toUpperCase() || '?'
+}
+
+function getCurrentPlayer(): Player | undefined {
+  return state.players.find((player) => player.id === state.currentPlayerId)
+}
+
+function sendSocketMessage(type: string, payload: Record<string, unknown> = {}): void {
+  const message = {
+    type,
+    roomCode: state.roomCode,
+    ...payload,
+  }
+
+  if (socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify(message))
+    return
+  }
+
+  queuedAction = () => {
+    socket.send(JSON.stringify(message))
+  }
+}
+
+function applyRoomState(serverState: Partial<RoomState>): void {
+  if (!serverState) {
+    return
+  }
+
+  state.roomCode = serverState.code || state.roomCode
+  state.players = serverState.players ?? state.players
+  state.roundNumber = serverState.roundNumber ?? state.roundNumber
+  state.question = serverState.question ?? state.question
+  state.selectedAnswer = serverState.selectedAnswer ?? state.selectedAnswer
+  state.answerAuthorId = serverState.answerAuthorId ?? state.answerAuthorId
+  state.activeGuesserIndex = serverState.activeGuesserIndex ?? state.activeGuesserIndex
+  state.roundResults = serverState.roundResults ?? state.roundResults
+  state.answers = serverState.answers ?? state.answers
+  state.guesses = serverState.guesses ?? state.guesses
+  state.timeLeft = serverState.timeLeft ?? state.timeLeft
+  state.phase = serverState.phase ?? state.phase
+  state.hasSubmittedAnswer = state.answers.some((answer) => answer.playerId === state.currentPlayerId)
+  state.selectedGuessId =
+    state.guesses.find((guess) => guess.guesserId === state.currentPlayerId)?.guessedId ?? state.selectedGuessId
+
+  if (state.role === 'host' && serverState.hostId) {
+    state.currentPlayerId = serverState.hostId
+  } else if (!state.currentPlayerId || !state.players.some((player) => player.id === state.currentPlayerId)) {
+    const matchingName = state.playerName.trim().toLowerCase()
+    const matchedPlayer = state.players.find((player) => player.name.toLowerCase() === matchingName)
+    state.currentPlayerId = matchedPlayer?.id ?? state.players[0]?.id ?? state.currentPlayerId
+  }
+
+  if (state.phase === 'lobby') {
+    state.screen = 'lobby'
+  } else if (state.phase === 'answer') {
+    state.screen = state.role === 'host' ? 'host-round' : 'player-answer'
+  } else if (state.phase === 'guess') {
+    state.screen = state.role === 'host' ? 'host-round' : 'player-guess'
+  } else if (state.phase === 'leaderboard') {
+    state.screen = 'leaderboard'
+  }
+
+  renderApp()
+}
+
+function createRoomSession(): void {
+  const rawName = window.prompt('Choose your display name for this room', state.playerName || 'Host') ?? 'Host'
+  const nextName = rawName.trim() || 'Host'
+  state.playerName = nextName
+  state.role = 'host'
+  state.screen = 'lobby'
+
+  if (socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode }))
+    return
+  }
+
+  queuedAction = () => {
+    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode }))
+  }
+
+  renderApp()
+}
+
+function joinRoomSession(): void {
+  const rawName = window.prompt('Enter your player name', state.playerName || 'Player') ?? 'Player'
+  const name = rawName.trim() || 'Player'
+  const rawRoomCode = window.prompt('Enter the room code', state.roomCode || '') ?? ''
+  const roomCode = rawRoomCode.trim().toUpperCase()
+
+  if (!roomCode) {
+    window.alert('A room code is required to join.')
+    return
+  }
+
+  state.playerName = name
+  state.role = 'player'
+  state.roomCode = roomCode
+
+  if (socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'join-room', name, roomCode }))
+    return
+  }
+
+  queuedAction = () => {
+    socket.send(JSON.stringify({ type: 'join-room', name, roomCode }))
+  }
+
+  renderApp()
+}
+
+function startRound(): void {
+  if (!state.roomCode) {
+    return
+  }
+
+  if (state.role === 'host') {
+    const questionText = state.customQuestion.trim()
+
+    if (!questionText) {
+      window.alert('Type a question before starting the round.')
+      return
+    }
+
+    if (questionText.length < 8) {
+      window.alert('Question should be at least 8 characters long.')
+      return
+    }
+  }
+
+  sendSocketMessage('start-round', { question: state.customQuestion.trim() })
+}
+
+function revealAnswer(): void {
+  if (!state.roomCode) {
+    return
+  }
+
+  sendSocketMessage('reveal-answer')
+}
+
+function submitPlayerAnswer(answer: string): void {
+  if (!state.roomCode || !state.currentPlayerId) {
+    return
+  }
+
+  sendSocketMessage('submit-answer', { playerId: state.currentPlayerId, answerText: answer })
+}
+
+function handleGuess(guessId: string): void {
+  if (!state.roomCode || !state.currentPlayerId) {
+    return
+  }
+
+  state.selectedGuessId = guessId
+  sendSocketMessage('guess', { playerId: state.currentPlayerId, targetPlayerId: guessId })
+}
+
+function lockAnswers(): void {
+  if (!state.roomCode) {
+    return
+  }
+
+  sendSocketMessage('lock-answers')
+}
+
+function calculateScores(): void {
+  if (!state.roomCode) {
+    return
+  }
+
+  sendSocketMessage('calculate-score')
+}
+
+function advanceAnswer(): void {
+  if (!state.roomCode) {
+    return
+  }
+
+  sendSocketMessage('advance-answer')
+}
+
+function renderWelcome(): void {
+  root.innerHTML = `
+    <main class="shell">
+      <section class="panel welcome-panel">
+        <p class="eyebrow">Guess Party</p>
+        <h1>Who wrote the answer?</h1>
+        <p class="subtitle">A friendly group game for family and friends.</p>
+
+        <div class="welcome-grid">
+          <button class="feature-card primary" type="button" data-role="create-room">
+            <span class="card-tag">Host</span>
+            <strong>Create room</strong>
+            <small>Start the round and manage the game flow.</small>
+          </button>
+
+          <button class="feature-card secondary" type="button" data-role="join-room">
+            <span class="card-tag">Player</span>
+            <strong>Join room</strong>
+            <small>Enter your name and play with the group.</small>
+          </button>
+        </div>
+      </section>
+    </main>
+  `
+
+  root.querySelector('[data-role="create-room"]')?.addEventListener('click', () => {
+    state.customQuestion = ''
+    createRoomSession()
+  })
+
+  root.querySelector('[data-role="join-room"]')?.addEventListener('click', () => {
+    joinRoomSession()
+  })
+}
+
+function renderLobby(): void {
+  const leaderboard = [...state.players].sort((a, b) => b.score - a.score)
+  const hostQuestionIsValid = state.customQuestion.trim().length >= 8
+
+  root.innerHTML = `
+    <main class="shell">
+      <section class="panel hero-panel">
+        <div class="hero-copy">
+          <p class="eyebrow">${state.role === 'host' ? 'Host view' : 'Player view'}</p>
+          <h1>${state.role === 'host' ? 'Room ready' : 'Waiting in the room'}</h1>
+          <p class="subtitle">Room code: ${state.roomCode}</p>
+        </div>
+
+        <div class="room-card">
+          <span class="chip">Room code</span>
+          <strong>${state.roomCode}</strong>
+          ${state.role === 'host'
+            ? `<button class="primary-button" type="button" data-role="start-round" ${hostQuestionIsValid ? '' : 'disabled'}>Start round</button>`
+            : '<div class="chip">Waiting for the host to begin</div>'}
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <h2>Players</h2>
+          <span>${state.players.length} joined</span>
+        </div>
+
+        <div class="player-list">
+          ${state.players
+            .map(
+              (player) => `
+                <div class="player-pill ${player.id === state.currentPlayerId ? 'active' : ''}">
+                  <span class="avatar">${formatPlayerInitials(player.name)}</span>
+                  <span>${player.name}</span>
+                </div>
+              `,
+            )
+            .join('')}
+        </div>
+      </section>
+
+      ${state.role === 'host'
+        ? `
+          <section class="panel">
+            <div class="section-head">
+              <h2>Round prompt</h2>
+              <span>${state.customQuestion.trim() ? 'Ready to play' : 'Required'}</span>
+            </div>
+
+            <form id="host-question-form" class="host-question-form">
+              <label for="host-question">Type the question for this round</label>
+              <textarea id="host-question" rows="3" maxlength="220" placeholder="Example: What is the most creative way to spend a rainy Sunday with friends?">${state.customQuestion}</textarea>
+              <div class="host-question-actions">
+                <button class="secondary-button" type="submit">Save question</button>
+                <button class="ghost-button" type="button" data-role="clear-question">Clear</button>
+              </div>
+            </form>
+
+            <div class="rules-list">
+              <div class="rule-item"><strong>1.</strong><span>Wait for the host to provide a question.</span></div>
+              <div class="rule-item"><strong>2.</strong><span>Answer the question and wait for everyone else to submit their answers.</span></div>
+              <div class="rule-item"><strong>3.</strong><span>Once enough answers are in, the host starts the guessing phase.</span></div>
+              <div class="rule-item"><strong>4.</strong><span>You cannot guess your own answer, and faster correct guesses earn a speed bonus.</span></div>
+            </div>
+          </section>
+          `
+        : `
+          <section class="panel">
+            <div class="section-head">
+              <h2>Room rules</h2>
+            </div>
+            <div class="rules-list">
+              <div class="rule-item"><strong>1.</strong><span>Wait for the host to provide a question.</span></div>
+              <div class="rule-item"><strong>2.</strong><span>Answer the question, then wait for everyone else to submit their answers.</span></div>
+              <div class="rule-item"><strong>3.</strong><span>Each person tries to guess who wrote each answer.</span></div>
+              <div class="rule-item"><strong>4.</strong><span>Correct guesses with quick reactions score more points.</span></div>
+            </div>
+          </section>
+          `}
+
+      <section class="panel">
+        <div class="section-head">
+          <h2>Leaderboard</h2>
+        </div>
+
+        <div class="leaderboard">
+          ${leaderboard
+            .map(
+              (player, index) => `
+                <div class="leaderboard-row ${index === 0 ? 'winner' : ''}">
+                  <span>#${index + 1} ${player.name}</span>
+                  <strong>${formatScore(player.score)}</strong>
+                </div>
+              `,
+            )
+            .join('')}
+        </div>
+      </section>
+    </main>
+  `
+
+  root.querySelector('[data-role="start-round"]')?.addEventListener('click', () => {
+    startRound()
+  })
+
+  root.querySelector('[data-role="clear-question"]')?.addEventListener('click', () => {
+    state.customQuestion = ''
+    renderApp()
+  })
+
+  const hostQuestionForm = root.querySelector<HTMLFormElement>('#host-question-form')
+  hostQuestionForm?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const textarea = root.querySelector<HTMLTextAreaElement>('#host-question')
+    const value = textarea?.value.trim() ?? ''
+
+    if (!value) {
+      window.alert('Type a question before starting the round.')
+      return
+    }
+
+    state.customQuestion = value
+    renderApp()
+  })
+}
+
+function renderHostRound(): void {
+  const visiblePlayers = state.players.filter((player) => player.id !== state.currentPlayerId)
+  const guessMap = new Map(state.guesses.map((guess) => [guess.guesserId, guess]))
+
+  root.innerHTML = `
+    <main class="shell">
+      <section class="panel round-panel">
+        <div class="round-header">
+          <div>
+            <p class="eyebrow">Round ${state.roundNumber}</p>
+            <h1>${state.question}</h1>
+          </div>
+          <div class="timer-box">${state.phase === 'answer' ? 'Answer phase' : 'Guess phase'}</div>
+        </div>
+
+        <div class="answer-reveal">
+          <span>${state.phase === 'answer' ? 'Hidden answer to reveal' : 'Random answer'}</span>
+          <strong>${state.phase === 'answer' ? 'Waiting for reveal...' : state.selectedAnswer}</strong>
+        </div>
+
+        ${state.phase === 'answer'
+          ? `
+            <div class="turn-box">
+              <p>Answer collection</p>
+              <h2>${state.answers.length} submitted</h2>
+            </div>
+            <button class="primary-button" type="button" data-role="lock-answers" ${state.answers.length > 0 ? '' : 'disabled'}>Start guessing</button>
+            `
+          : `
+            <div class="turn-box">
+              <p>Current turn</p>
+              <h2>Choose who wrote it</h2>
+            </div>
+
+            <div class="guess-status-list">
+              ${visiblePlayers
+                .map((player) => {
+                  const guess = guessMap.get(player.id)
+                  return `
+                    <div class="guess-status-row ${guess ? 'done' : 'waiting'}">
+                      <span>${player.name}</span>
+                      <strong>${guess ? `Guessed: ${guess.guessedName}` : 'Did not guess yet'}</strong>
+                    </div>
+                  `
+                })
+                .join('')}
+            </div>
+            <div class="host-actions-row">
+              <button class="primary-button" type="button" data-role="calculate-score">Stop timer and calculate score</button>
+              <button class="secondary-button" type="button" data-role="advance-answer">Continue to next round of guessing</button>
+            </div>
+          `}
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <h2>Submitted answers</h2>
+        </div>
+
+        <div class="result-list">
+          ${state.answers.length > 0
+            ? state.answers
+                .map(
+                  (entry) => `
+                    <div class="result-row">
+                      <span>${entry.playerName}:</span>
+                      <strong>${entry.text}</strong>
+                    </div>
+                  `,
+                )
+                .join('')
+            : '<div class="result-row"><span>No answers submitted yet</span></div>'}
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <h2>Live leaderboard</h2>
+        </div>
+
+        <div class="leaderboard">
+          ${[...state.players]
+            .sort((a, b) => b.score - a.score)
+            .map(
+              (player, index) => `
+                <div class="leaderboard-row ${index === 0 ? 'winner' : ''}">
+                  <span>#${index + 1} ${player.name}</span>
+                  <strong>${formatScore(player.score)}</strong>
+                </div>
+              `,
+            )
+            .join('')}
+        </div>
+      </section>
+    </main>
+  `
+
+  root.querySelector<HTMLButtonElement>('[data-role="reveal-answer"]')?.addEventListener('click', () => {
+    revealAnswer()
+  })
+
+  root.querySelector<HTMLButtonElement>('[data-role="lock-answers"]')?.addEventListener('click', () => {
+    lockAnswers()
+  })
+
+  root.querySelector<HTMLButtonElement>('[data-role="calculate-score"]')?.addEventListener('click', () => {
+    calculateScores()
+  })
+
+  root.querySelector<HTMLButtonElement>('[data-role="advance-answer"]')?.addEventListener('click', () => {
+    advanceAnswer()
+  })
+
+  root.querySelectorAll<HTMLButtonElement>('[data-guess-id]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const guessId = button.dataset.guessId ?? ''
+      handleGuess(guessId)
+    })
+  })
+}
+
+function renderPlayerAnswer(): void {
+  const alreadySubmitted = state.answers.some((entry) => entry.playerId === state.currentPlayerId)
+
+  root.innerHTML = `
+    <main class="shell">
+      <section class="panel player-answer-panel">
+        <p class="eyebrow">Round ${state.roundNumber}</p>
+        <h1>${state.question}</h1>
+
+        <div class="answer-box">
+          <label for="player-answer">Write your answer</label>
+          <textarea id="player-answer" rows="4" placeholder="Type your answer here..." ${alreadySubmitted ? 'disabled' : ''}></textarea>
+        </div>
+
+        <button class="primary-button" type="button" data-role="submit-answer" ${alreadySubmitted ? 'disabled' : ''}>Submit answer</button>
+
+        ${alreadySubmitted ? '<div class="mini-card"><span>Waiting for other participants...</span></div>' : ''}
+
+        <div class="mini-card">
+          <span>Playing as</span>
+          <strong>${getCurrentPlayer()?.name ?? 'Guest'}</strong>
+        </div>
+      </section>
+    </main>
+  `
+
+  root.querySelector<HTMLButtonElement>('[data-role="submit-answer"]')?.addEventListener('click', () => {
+    const input = root.querySelector<HTMLTextAreaElement>('#player-answer')
+    const value = input?.value.trim()
+
+    if (!value) {
+      return
+    }
+
+    state.hasSubmittedAnswer = true
+    submitPlayerAnswer(value)
+    renderApp()
+  })
+}
+
+function renderPlayerGuess(): void {
+  const guessOptions = state.players.filter((player) => player.id !== state.currentPlayerId)
+  const selectedGuessId = state.selectedGuessId ?? state.guesses.find((entry) => entry.guesserId === state.currentPlayerId)?.guessedId ?? null
+
+  root.innerHTML = `
+    <main class="shell">
+      <section class="panel round-panel">
+        <div class="round-header">
+          <div>
+            <p class="eyebrow">Your turn</p>
+            <h1>${state.question}</h1>
+          </div>
+          <div class="timer-box">Guess who wrote it</div>
+        </div>
+
+        <div class="answer-reveal">
+          <span>Random answer</span>
+          <strong>${state.selectedAnswer}</strong>
+        </div>
+
+        <div class="turn-box">
+          <p>Current turn</p>
+          <h2>Choose who wrote it</h2>
+        </div>
+
+        <div class="guess-grid">
+          ${guessOptions
+            .map(
+              (player) => `
+                <button type="button" class="guess-card ${selectedGuessId === player.id ? 'selected' : ''}" data-guess-id="${player.id}">
+                  <span>${player.name}</span>
+                  <small>Guess this person</small>
+                </button>
+              `,
+            )
+            .join('')}
+        </div>
+
+        <div class="mini-card">
+          <span>${selectedGuessId ? 'Your pick' : 'Waiting for your pick'}</span>
+          <strong>${selectedGuessId ? guessOptions.find((player) => player.id === selectedGuessId)?.name ?? 'Selected' : 'No selection yet'}</strong>
+        </div>
+      </section>
+    </main>
+  `
+
+  root.querySelectorAll<HTMLButtonElement>('[data-guess-id]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const guessId = button.dataset.guessId ?? ''
+      handleGuess(guessId)
+      renderApp()
+    })
+  })
+}
+
+function renderLeaderboard(): void {
+  const sortedPlayers = [...state.players].sort((a, b) => b.score - a.score)
+
+  root.innerHTML = `
+    <main class="shell">
+      <section class="panel summary-panel">
+        <p class="eyebrow">Round complete</p>
+        <h1>Final standings</h1>
+
+        <div class="leaderboard">
+          ${sortedPlayers
+            .map(
+              (player, index) => `
+                <div class="leaderboard-row ${index === 0 ? 'winner' : ''}">
+                  <span>#${index + 1} ${player.name}</span>
+                  <strong>${formatScore(player.score)}</strong>
+                </div>
+              `,
+            )
+            .join('')}
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <h2>Round results</h2>
+        </div>
+
+        <div class="mini-card">
+          <span>Correct answer author</span>
+          <strong>${state.players.find((player) => player.id === state.answerAuthorId)?.name ?? 'Unknown'}</strong>
+        </div>
+
+        <div class="result-list">
+          ${state.roundResults
+            .map(
+              (result) => `
+                <div class="result-row ${result.correct ? 'success' : 'fail'}">
+                  <span>${result.guesserName} guessed ${result.guessedName}</span>
+                  <strong>${result.correct ? `+${formatScore(result.points)}` : 'No points'}</strong>
+                </div>
+              `,
+            )
+            .join('')}
+        </div>
+
+        ${state.role === 'host' ? '<button class="primary-button next-round" type="button" data-role="next-round">Next round</button>' : ''}
+      </section>
+    </main>
+  `
+
+  root.querySelector<HTMLButtonElement>('[data-role="next-round"]')?.addEventListener('click', () => {
+    startRound()
+  })
+}
+
+function renderApp(): void {
+  if (state.screen === 'welcome') {
+    renderWelcome()
+    return
+  }
+
+  if (state.screen === 'lobby') {
+    renderLobby()
+    return
+  }
+
+  if (state.screen === 'host-round') {
+    renderHostRound()
+    return
+  }
+
+  if (state.screen === 'player-answer') {
+    renderPlayerAnswer()
+    return
+  }
+
+  if (state.screen === 'player-guess') {
+    renderPlayerGuess()
+    return
+  }
+
+  renderLeaderboard()
+}
+
+socket.addEventListener('open', () => {
+  if (queuedAction) {
+    const nextAction = queuedAction
+    queuedAction = null
+    nextAction()
+  }
+})
+
+socket.addEventListener('message', (event) => {
+  try {
+    const payload = JSON.parse(event.data)
+
+    if (payload.type === 'room-state') {
+      applyRoomState(payload.state)
+      return
+    }
+
+    if (payload.type === 'error') {
+      window.alert(payload.message || 'Something went wrong.')
+    }
+  } catch {
+    window.alert('The room connection sent invalid data.')
+  }
+})
+
+socket.addEventListener('close', () => {
+  window.alert('The game server connection was closed. Refresh the page to reconnect.')
+})
+
+renderApp()
