@@ -82,20 +82,29 @@ let queuedAction: (() => void) | null = null
 
 const socket = new WebSocket(buildSocketUrl())
 
+// Vite dev server (5173) proxies nothing, so dev must reach the API/WS server on its own port.
+const DEV_API_PORT = '8080'
+
+function isViteDevServer(): boolean {
+  return window.location.port === '5173'
+}
+
 function buildSocketUrl(): string {
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  const host = window.location.hostname || 'localhost'
-  return `${protocol}://${host}:8080/ws`
+
+  if (isViteDevServer()) {
+    return `${protocol}://${window.location.hostname || 'localhost'}:${DEV_API_PORT}/ws`
+  }
+
+  return `${protocol}://${window.location.host}/ws`
 }
 
 function buildApiUrl(path: string): string {
-  if (window.location.port === '8080') {
+  if (!isViteDevServer()) {
     return path
   }
 
-  const protocol = window.location.protocol === 'https:' ? 'https' : 'http'
-  const host = window.location.hostname || 'localhost'
-  return `${protocol}://${host}:8080${path}`
+  return `${window.location.protocol}//${window.location.hostname || 'localhost'}:${DEV_API_PORT}${path}`
 }
 
 function formatScore(value: number): string {
@@ -966,4 +975,31 @@ socket.addEventListener('close', () => {
   window.alert('The game server connection was closed. Refresh the page to reconnect.')
 })
 
-renderApp()
+async function consumeEmailVerificationLink(): Promise<void> {
+  const params = new URLSearchParams(window.location.search)
+  const token = params.get('verify')
+  if (!token) {
+    return
+  }
+
+  // Strip the token from the URL immediately so it can't be reused/leaked via history or referrers.
+  params.delete('verify')
+  const cleanedSearch = params.toString()
+  window.history.replaceState(null, '', `${window.location.pathname}${cleanedSearch ? `?${cleanedSearch}` : ''}`)
+
+  try {
+    const response = await fetch(buildApiUrl('/auth/verify-email'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    })
+    const payload = await response.json()
+    window.alert(response.ok ? 'Email verified! You can now log in to host a room.' : (payload.error || 'This verification link is invalid or expired.'))
+  } catch {
+    window.alert('Could not verify your email right now. Please try the link again later.')
+  }
+}
+
+consumeEmailVerificationLink().finally(() => {
+  renderApp()
+})

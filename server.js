@@ -1,21 +1,36 @@
 import express from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import http from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { createAuthService } from './auth.js';
+import { sendVerificationEmail } from './emailService.js';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const distDirectory = path.join(__dirname, 'dist');
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
 const PORT = process.env.PORT || 8080;
 const isProduction = process.env.NODE_ENV === 'production';
+const appOrigin = process.env.APP_ORIGIN || 'http://localhost:5173';
 const sessionCookieName = 'guess_party_session';
 const authService = createAuthService({
   sendVerificationEmail: ({ email, token }) => {
-    if (!isProduction) {
-      console.log(`Verification token for ${email}: ${token}`);
-    }
+    const link = `${appOrigin}/?verify=${encodeURIComponent(token)}`;
+
+    sendVerificationEmail({ email, link })
+      .then((sent) => {
+        if (!sent && !isProduction) {
+          console.log(`Verification link for ${email}: ${link}`);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to send verification email:', error);
+      });
   },
 });
 const questionBank = [
@@ -353,7 +368,7 @@ function evaluateGuess(room, guesserId, guessTargetId) {
   broadcastRoom(room);
 }
 
-app.use(cors({ origin: process.env.APP_ORIGIN || 'http://localhost:5173', credentials: true }));
+app.use(cors({ origin: appOrigin, credentials: true }));
 app.use(express.json());
 
 function parseCookies(header = '') {
@@ -382,7 +397,15 @@ function requestUser(request) {
   return authService.getUserBySession(parseCookies(request.headers.cookie)[sessionCookieName]);
 }
 
-app.post('/auth/signup', (req, res) => {
+const authRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many attempts. Please try again later.' },
+});
+
+app.post('/auth/signup', authRateLimiter, (req, res) => {
   const result = authService.signUp(req.body?.email, req.body?.password);
   if (result.error) {
     res.status(400).json({ error: result.error });
@@ -391,7 +414,7 @@ app.post('/auth/signup', (req, res) => {
   res.status(201).json({ user: result.user, emailVerificationRequired: true });
 });
 
-app.post('/auth/login', (req, res) => {
+app.post('/auth/login', authRateLimiter, (req, res) => {
   const result = authService.login(req.body?.email, req.body?.password);
   if (result.error) {
     res.status(result.code === 'EMAIL_NOT_VERIFIED' ? 403 : 401).json({ error: result.error, code: result.code });
@@ -433,6 +456,19 @@ app.get('/rooms', (req, res) => {
   }));
 
   res.json(summary);
+});
+
+// Serve the built frontend (single App Service hosts both frontend and API/WS).
+app.use(express.static(distDirectory));
+app.use((req, res, next) => {
+  if (req.method !== 'GET' || req.path.startsWith('/auth/') || req.path === '/health' || req.path === '/rooms') {
+    next();
+    return;
+  }
+
+  res.sendFile(path.join(distDirectory, 'index.html'), (err) => {
+    if (err) next(err);
+  });
 });
 
 wss.on('connection', (socket, request) => {

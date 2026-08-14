@@ -20,10 +20,12 @@
     "vitest": "^1.0.0"
   },
   "dependencies": {
+    "@azure/communication-email": "^1.0.0",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^13.0.3",
     "cors": "^2.8.6",
     "express": "^5.2.1",
+    "express-rate-limit": "^7.4.1",
     "ws": "^8.21.3"
   }
 }
