@@ -527,6 +527,6 @@ export {
 };
 
 // Graceful shutdown for testing
-if (import.meta.env.VITEST) {
+if (import.meta.env?.VITEST) {
   server.close();
 }
