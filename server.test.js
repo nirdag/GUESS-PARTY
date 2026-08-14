@@ -27,7 +27,7 @@ function createTestRoom() {
     answers: [],
     guesses: [],
     answerQueue: [],
-    currentAnswerIndex: 0,
+    currentAnswer: null,
     roundResults: [],
     hostId: `TEST12-host-${Date.now()}`,
     hostName: 'Host',
@@ -56,7 +56,7 @@ describe('CRITICAL: Scoring Logic', () => {
     room.players = [player1, player2];
 
     room.answerQueue = [{ playerId: 'p1', text: 'test answer', playerName: 'Alice' }];
-    room.currentAnswerIndex = 0;
+    room.currentAnswer = room.answerQueue[0];
     room.phase = 'guessing';
     room.guesses = [
       { guesserId: 'p2', guesserName: 'Bob', guessedId: 'p1', guessedName: 'Alice' },
@@ -76,7 +76,7 @@ describe('CRITICAL: Scoring Logic', () => {
     room.players = [player1, player2, player3];
 
     room.answerQueue = [{ playerId: 'p1', text: 'test answer', playerName: 'Alice' }];
-    room.currentAnswerIndex = 0;
+    room.currentAnswer = room.answerQueue[0];
     room.phase = 'guessing';
     room.guesses = [
       { guesserId: 'p2', guesserName: 'Bob', guessedId: 'p3', guessedName: 'Charlie' },
@@ -96,7 +96,7 @@ describe('CRITICAL: Scoring Logic', () => {
     room.players = [player1, player2, player3];
 
     room.answerQueue = [{ playerId: 'p1', text: 'test answer', playerName: 'Alice' }];
-    room.currentAnswerIndex = 0;
+    room.currentAnswer = room.answerQueue[0];
     room.phase = 'guessing';
     room.guesses = [
       { guesserId: 'p2', guesserName: 'Bob', guessedId: 'p1', guessedName: 'Alice' },
@@ -115,7 +115,7 @@ describe('CRITICAL: Scoring Logic', () => {
     room.players = [player1];
 
     room.answerQueue = [{ playerId: 'p1', text: 'test', playerName: 'Alice' }];
-    room.currentAnswerIndex = 0;
+    room.currentAnswer = room.answerQueue[0];
     room.phase = 'guessing';
     room.guesses = [];
 
@@ -144,7 +144,7 @@ describe('CRITICAL: Scoring Logic', () => {
       { playerId: 'p1', text: 'answer1', playerName: 'Alice' },
       { playerId: 'p2', text: 'answer2', playerName: 'Bob' },
     ];
-    room.currentAnswerIndex = 0;
+    room.currentAnswer = room.answerQueue[0];
     room.phase = 'guessing';
     room.guesses = [{ guesserId: 'p2', guesserName: 'Bob', guessedId: 'p1', guessedName: 'Alice' }];
 
@@ -152,7 +152,7 @@ describe('CRITICAL: Scoring Logic', () => {
     expect(player2.score).toBe(120);
 
     // Round 2
-    room.currentAnswerIndex = 1;
+    room.currentAnswer = room.answerQueue[1];
     room.phase = 'guessing';
     room.guesses = [{ guesserId: 'p1', guesserName: 'Alice', guessedId: 'p2', guessedName: 'Bob' }];
 
@@ -176,7 +176,7 @@ describe('CRITICAL: Guess Validation', () => {
     room.hostId = 'host-123';
     room.answerQueue = [{ playerId: 'p1', text: 'test', playerName: 'Alice' }];
     room.phase = 'guessing';
-    room.currentAnswerIndex = 0;
+    room.currentAnswer = room.answerQueue[0];
 
     evaluateGuess(room, 'host-123', 'p1');
 
@@ -189,7 +189,7 @@ describe('CRITICAL: Guess Validation', () => {
     room.hostId = 'host-123';
     room.answerQueue = [{ playerId: 'p1', text: 'test', playerName: 'Alice' }];
     room.phase = 'guessing';
-    room.currentAnswerIndex = 0;
+    room.currentAnswer = room.answerQueue[0];
 
     evaluateGuess(room, 'p1', 'p1');
 
@@ -203,7 +203,7 @@ describe('CRITICAL: Guess Validation', () => {
     room.hostId = 'host-123';
     room.answerQueue = [{ playerId: 'p1', text: 'test', playerName: 'Alice' }];
     room.phase = 'guessing';
-    room.currentAnswerIndex = 0;
+    room.currentAnswer = room.answerQueue[0];
 
     // p1 (answer author) tries to guess p2 - should be prevented
     evaluateGuess(room, 'p1', 'p2');
@@ -219,7 +219,7 @@ describe('CRITICAL: Guess Validation', () => {
     room.hostId = 'host-123';
     room.answerQueue = [{ playerId: 'p1', text: 'test', playerName: 'Alice' }];
     room.phase = 'guessing';
-    room.currentAnswerIndex = 0;
+    room.currentAnswer = room.answerQueue[0];
 
     evaluateGuess(room, 'p2', 'p3');
     expect(room.guesses).toHaveLength(1);
@@ -236,7 +236,7 @@ describe('CRITICAL: Guess Validation', () => {
     room.hostId = 'host-123';
     room.answerQueue = [{ playerId: 'p1', text: 'test', playerName: 'Alice' }];
     room.phase = 'guessing';
-    room.currentAnswerIndex = 0;
+    room.currentAnswer = room.answerQueue[0];
 
     evaluateGuess(room, 'p2', 'p3');
 
@@ -252,7 +252,7 @@ describe('CRITICAL: Guess Validation', () => {
     room.hostId = 'host-123';
     room.answerQueue = [{ playerId: 'p1', text: 'test' }];
     room.phase = 'answer-collection';
-    room.currentAnswerIndex = 0;
+    room.currentAnswer = room.answerQueue[0];
 
     evaluateGuess(room, 'p2', 'p1');
 
@@ -276,8 +276,8 @@ describe('HIGH: Game Flow Transitions', () => {
     lockAnswers(room);
 
     expect(room.phase).toBe('guessing');
-    expect(room.answerQueue).toHaveLength(1);
-    expect(room.currentAnswerIndex).toBe(0);
+    expect(room.answerQueue).toHaveLength(0);
+    expect(room.currentAnswer).toEqual(room.answers[0]);
   });
 
   it('lockAnswers does nothing if no answers submitted', () => {
@@ -291,8 +291,6 @@ describe('HIGH: Game Flow Transitions', () => {
 
   it('prepareCurrentAnswer displays answer', () => {
     room.answerQueue = [{ playerId: 'p1', text: 'test answer', playerName: 'Alice' }];
-    room.currentAnswerIndex = 0;
-
     prepareCurrentAnswer(room);
 
     expect(room.selectedAnswer).toBe('test answer');
@@ -302,8 +300,6 @@ describe('HIGH: Game Flow Transitions', () => {
 
   it('prepareCurrentAnswer transitions to game-end when queue exhausted', () => {
     room.answerQueue = [];
-    room.currentAnswerIndex = 0;
-
     prepareCurrentAnswer(room);
 
     expect(room.phase).toBe('game-end');
@@ -316,19 +312,17 @@ describe('HIGH: Game Flow Transitions', () => {
       { playerId: 'p1', text: 'answer1', playerName: 'Alice' },
       { playerId: 'p2', text: 'answer2', playerName: 'Bob' },
     ];
-    room.currentAnswerIndex = 0;
-
+    room.currentAnswer = room.answerQueue.shift();
     advanceGuessRound(room);
 
-    expect(room.currentAnswerIndex).toBe(1);
     expect(room.phase).toBe('guessing');
+    expect(room.answerQueue).toHaveLength(0);
   });
 
   it('advanceGuessRound transitions to game-end when last answer played', () => {
     room.phase = 'round-end';
     room.answerQueue = [{ playerId: 'p1', text: 'answer1', playerName: 'Alice' }];
-    room.currentAnswerIndex = 0;
-
+    room.currentAnswer = room.answerQueue.shift();
     advanceGuessRound(room);
 
     expect(room.phase).toBe('game-end');
@@ -340,7 +334,6 @@ describe('HIGH: Game Flow Transitions', () => {
       { playerId: 'p1', text: 'answer1', playerName: 'Alice' },
       { playerId: 'p2', text: 'answer2', playerName: 'Bob' },
     ];
-    room.currentAnswerIndex = 0;
     room.guesses = [{ guesserId: 'p1', guesserName: 'Alice', guessedId: 'p2' }];
 
     advanceGuessRound(room);

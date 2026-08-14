@@ -116,7 +116,7 @@ function createRoom({ hostName, hostAccountId = null }) {
     answers: [],
     guesses: [],
     answerQueue: [],
-    currentAnswerIndex: 0,
+    currentAnswer: null,
     roundResults: [],
     hostId: `${code}-host-${Date.now()}`,
     hostAccountId,
@@ -168,7 +168,7 @@ function startRound(room, customQuestion = '') {
   room.answers = [];
   room.guesses = [];
   room.answerQueue = [];
-  room.currentAnswerIndex = 0;
+  room.currentAnswer = null;
   room.roundResults = [];
   room.activeGuesserIndex = 0;
   room.playerTurnIndex = 0;
@@ -182,9 +182,8 @@ function startRound(room, customQuestion = '') {
 }
 
 function prepareCurrentAnswer(room) {
-  const currentAnswer = room.answerQueue[room.currentAnswerIndex];
-
-  if (!currentAnswer) {
+  if (room.answerQueue.length === 0) {
+    room.currentAnswer = null;
     room.phase = 'game-end';
     room.timeLeft = 0;
     room.answerAuthorId = null;
@@ -193,11 +192,16 @@ function prepareCurrentAnswer(room) {
     return;
   }
 
+  const randomIndex = Math.floor(Math.random() * room.answerQueue.length);
+  const [currentAnswer] = room.answerQueue.splice(randomIndex, 1);
+
+  room.currentAnswer = currentAnswer;
+
   room.answerAuthorId = currentAnswer.playerId;
   room.selectedAnswer = currentAnswer.text;
   room.guesses = [];
   room.activeGuesserIndex = 0;
-  room.answerRoundNumber = room.currentAnswerIndex + 1;
+  room.answerRoundNumber = (room.answers.length || room.answerQueue.length + 1) - room.answerQueue.length;
   room.timeLeft = 0;
   broadcastRoom(room);
 }
@@ -208,15 +212,13 @@ function lockAnswers(room) {
   }
 
   room.answerQueue = room.answers.map((answer) => ({ ...answer }));
-  room.currentAnswerIndex = 0;
+  room.currentAnswer = null;
   room.phase = 'guessing';
   prepareCurrentAnswer(room);
 }
 
 function moveToNextAnswer(room) {
-  const nextIndex = room.currentAnswerIndex + 1;
-
-  if (nextIndex >= room.answerQueue.length) {
+  if (room.answerQueue.length === 0) {
     room.phase = 'leaderboard';
     room.timeLeft = 0;
     room.answerAuthorId = null;
@@ -226,16 +228,15 @@ function moveToNextAnswer(room) {
     return;
   }
 
-  room.currentAnswerIndex = nextIndex;
   prepareCurrentAnswer(room);
 }
 
 function calculateRoundScores(room) {
-  if (room.phase !== 'guessing' || !room.answerQueue[room.currentAnswerIndex]) {
+  if (room.phase !== 'guessing' || !room.currentAnswer) {
     return;
   }
 
-  const answerEntry = room.answerQueue[room.currentAnswerIndex];
+  const answerEntry = room.currentAnswer;
   const correctPlayerId = answerEntry.playerId;
 
   room.roundResults = room.guesses.map((guess) => {
@@ -257,7 +258,6 @@ function calculateRoundScores(room) {
 
   room.phase = 'round-end';
   room.timeLeft = 0;
-  room.answerRoundNumber = room.currentAnswerIndex + 1;
   broadcastRoom(room);
 }
 
@@ -266,9 +266,7 @@ function advanceGuessRound(room) {
     return;
   }
 
-  const nextIndex = room.currentAnswerIndex + 1;
-
-  if (nextIndex >= room.answerQueue.length) {
+  if (room.answerQueue.length === 0) {
     room.phase = 'game-end';
     room.timeLeft = 0;
     room.answerAuthorId = null;
@@ -277,7 +275,6 @@ function advanceGuessRound(room) {
     return;
   }
 
-  room.currentAnswerIndex = nextIndex;
   room.phase = 'guessing';
   room.guesses = [];
   room.roundResults = [];
@@ -289,9 +286,6 @@ function revealAnswer(room) {
   room.timeLeft = 0;
   if (!room.answerQueue.length) {
     room.answerQueue = room.answers.map((answer) => ({ ...answer }));
-  }
-  if (!room.answerQueue[room.currentAnswerIndex]) {
-    room.currentAnswerIndex = 0;
   }
   prepareCurrentAnswer(room);
 }
@@ -330,7 +324,7 @@ function evaluateGuess(room, guesserId, guessTargetId) {
     return;
   }
 
-  const currentAnswer = room.answerQueue[room.currentAnswerIndex];
+  const currentAnswer = room.currentAnswer;
   const guesser = findPlayerById(room, guesserId);
   const target = findPlayerById(room, guessTargetId);
 
