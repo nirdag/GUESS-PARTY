@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  AZURE_WEBAPP_NAME: guess-party # TODO: set to the actual App Service name
+  AZURE_WEBAPP_NAME: guess-party-rxhbnhj2fk66m
 
 permissions:
   id-token: write # required for OIDC login to Azure
