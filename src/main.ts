@@ -679,7 +679,12 @@ function renderRoundEnd(): void {
         </div>
 
         <div class="mini-card">
-          <span>Correct answer author</span>
+          <span>The answer was</span>
+          <strong>"${state.selectedAnswer}"</strong>
+        </div>
+
+        <div class="mini-card">
+          <span>Written by</span>
           <strong>${state.players.find((player) => player.id === state.answerAuthorId)?.name ?? 'Unknown'}</strong>
         </div>
 

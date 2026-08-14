@@ -505,6 +505,28 @@ wss.on('connection', (socket) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`Guess Party server listening on http://localhost:${PORT}`);
-});
+// Only start server if not running in test environment
+if (process.env.NODE_ENV !== 'test' && !globalThis.__VITEST__) {
+  server.listen(PORT, () => {
+    console.log(`Guess Party server listening on http://localhost:${PORT}`);
+  });
+}
+
+// Export functions for testing
+export {
+  findPlayerById,
+  addPlayerToRoom,
+  calculateRoundScores,
+  evaluateGuess,
+  lockAnswers,
+  prepareCurrentAnswer,
+  advanceGuessRound,
+  submitAnswer,
+  createRoom,
+  createRoomCode,
+};
+
+// Graceful shutdown for testing
+if (import.meta.env.VITEST) {
+  server.close();
+}
