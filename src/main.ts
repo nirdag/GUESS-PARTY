@@ -9,6 +9,7 @@ type Account = {
   emailVerified: boolean
 }
 
+
 type Player = {
   id: string
   name: string
