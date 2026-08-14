@@ -2,12 +2,22 @@ import express from 'express';
 import cors from 'cors';
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
+import { createAuthService } from './auth.js';
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
 const PORT = process.env.PORT || 8080;
+const isProduction = process.env.NODE_ENV === 'production';
+const sessionCookieName = 'guess_party_session';
+const authService = createAuthService({
+  sendVerificationEmail: ({ email, token }) => {
+    if (!isProduction) {
+      console.log(`Verification token for ${email}: ${token}`);
+    }
+  },
+});
 const questionBank = [
   'What is the best way to spend a perfect family night?',
   'What is the most fun way to surprise a friend on a weekend?',
@@ -90,7 +100,7 @@ function nextTurn(room) {
   }
 }
 
-function createRoom({ hostName }) {
+function createRoom({ hostName, hostAccountId = null }) {
   const code = createRoomCode();
   const room = {
     code,
@@ -109,6 +119,7 @@ function createRoom({ hostName }) {
     currentAnswerIndex: 0,
     roundResults: [],
     hostId: `${code}-host-${Date.now()}`,
+    hostAccountId,
     hostName: (hostName || 'Host').trim() || 'Host',
     playerTurnIndex: 0,
   };
@@ -348,8 +359,72 @@ function evaluateGuess(room, guesserId, guessTargetId) {
   broadcastRoom(room);
 }
 
-app.use(cors());
+app.use(cors({ origin: process.env.APP_ORIGIN || 'http://localhost:5173', credentials: true }));
 app.use(express.json());
+
+function parseCookies(header = '') {
+  return Object.fromEntries(
+    header.split(';').map((part) => part.trim().split('=').map(decodeURIComponent)).filter(([key, value]) => key && value),
+  );
+}
+
+function setSessionCookie(response, token) {
+  const flags = [
+    `${sessionCookieName}=${encodeURIComponent(token)}`,
+    'HttpOnly',
+    'Path=/',
+    'SameSite=Lax',
+    `Max-Age=${60 * 60 * 24 * 30}`,
+  ];
+  if (isProduction) flags.push('Secure');
+  response.setHeader('Set-Cookie', flags.join('; '));
+}
+
+function clearSessionCookie(response) {
+  response.setHeader('Set-Cookie', `${sessionCookieName}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0`);
+}
+
+function requestUser(request) {
+  return authService.getUserBySession(parseCookies(request.headers.cookie)[sessionCookieName]);
+}
+
+app.post('/auth/signup', (req, res) => {
+  const result = authService.signUp(req.body?.email, req.body?.password);
+  if (result.error) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.status(201).json({ user: result.user, emailVerificationRequired: true });
+});
+
+app.post('/auth/login', (req, res) => {
+  const result = authService.login(req.body?.email, req.body?.password);
+  if (result.error) {
+    res.status(result.code === 'EMAIL_NOT_VERIFIED' ? 403 : 401).json({ error: result.error, code: result.code });
+    return;
+  }
+  setSessionCookie(res, result.token);
+  res.json({ user: result.user });
+});
+
+app.post('/auth/logout', (req, res) => {
+  const token = parseCookies(req.headers.cookie)[sessionCookieName];
+  authService.logout(token);
+  clearSessionCookie(res);
+  res.status(204).end();
+});
+
+app.get('/auth/session', (req, res) => {
+  res.json({ user: requestUser(req) });
+});
+
+app.post('/auth/verify-email', (req, res) => {
+  if (!authService.verifyEmail(req.body?.token)) {
+    res.status(400).json({ error: 'This verification link is invalid or expired.' });
+    return;
+  }
+  res.json({ verified: true });
+});
 
 app.get('/health', (req, res) => {
   res.json({ ok: true, rooms: rooms.size });
@@ -366,7 +441,8 @@ app.get('/rooms', (req, res) => {
   res.json(summary);
 });
 
-wss.on('connection', (socket) => {
+wss.on('connection', (socket, request) => {
+  socket.user = requestUser(request);
   socket.on('message', (raw) => {
     try {
       const message = JSON.parse(raw.toString());
@@ -374,7 +450,11 @@ wss.on('connection', (socket) => {
 
       switch (message.type) {
         case 'create-room': {
-          const roomData = createRoom({ hostName: message.name || 'Host' });
+          if (!socket.user) {
+            socket.send(JSON.stringify({ type: 'error', code: 'AUTH_REQUIRED', message: 'Log in to create a room.' }));
+            return;
+          }
+          const roomData = createRoom({ hostName: message.name || 'Host', hostAccountId: socket.user.id });
           socket.roomCode = roomData.code;
           socket.playerId = roomData.hostId;
           roomData.clients.add(socket);
@@ -403,7 +483,7 @@ wss.on('connection', (socket) => {
         }
 
         case 'start-round': {
-          if (!room) {
+          if (!room || room.hostAccountId !== socket.user?.id) {
             return;
           }
 
@@ -412,7 +492,7 @@ wss.on('connection', (socket) => {
         }
 
         case 'reveal-answer': {
-          if (!room) {
+          if (!room || room.hostAccountId !== socket.user?.id) {
             return;
           }
           revealAnswer(room);
@@ -420,7 +500,7 @@ wss.on('connection', (socket) => {
         }
 
         case 'lock-answers': {
-          if (!room) {
+          if (!room || room.hostAccountId !== socket.user?.id) {
             return;
           }
           lockAnswers(room);
@@ -428,7 +508,7 @@ wss.on('connection', (socket) => {
         }
 
         case 'calculate-score': {
-          if (!room) {
+          if (!room || room.hostAccountId !== socket.user?.id) {
             return;
           }
           calculateRoundScores(room);
@@ -436,7 +516,7 @@ wss.on('connection', (socket) => {
         }
 
         case 'advance-answer': {
-          if (!room) {
+          if (!room || room.hostAccountId !== socket.user?.id) {
             return;
           }
           advanceGuessRound(room);
@@ -447,7 +527,7 @@ wss.on('connection', (socket) => {
           if (!room) {
             return;
           }
-          submitAnswer(room, message.playerId || socket.playerId, message.answerText);
+          submitAnswer(room, socket.playerId, message.answerText);
           break;
         }
 
@@ -455,12 +535,12 @@ wss.on('connection', (socket) => {
           if (!room) {
             return;
           }
-          evaluateGuess(room, message.playerId || socket.playerId, message.targetPlayerId);
+          evaluateGuess(room, socket.playerId, message.targetPlayerId);
           break;
         }
 
         case 'next-round': {
-          if (!room) {
+          if (!room || room.hostAccountId !== socket.user?.id) {
             return;
           }
           startRound(room);

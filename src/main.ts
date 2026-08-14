@@ -1,7 +1,13 @@
 import './style.css'
 
 type Role = 'host' | 'player'
-type Screen = 'welcome' | 'lobby' | 'host-managing' | 'player-answering' | 'player-guessing' | 'round-end' | 'game-end'
+type Screen = 'welcome' | 'membership' | 'lobby' | 'host-managing' | 'player-answering' | 'player-guessing' | 'round-end' | 'game-end'
+
+type Account = {
+  id: string
+  email: string
+  emailVerified: boolean
+}
 
 type Player = {
   id: string
@@ -51,6 +57,7 @@ const root = app
 
 const state = {
   screen: 'welcome' as Screen,
+  account: null as Account | null,
   role: 'host' as Role,
   roomCode: '',
   playerName: '',
@@ -79,6 +86,16 @@ function buildSocketUrl(): string {
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
   const host = window.location.hostname || 'localhost'
   return `${protocol}://${host}:8080/ws`
+}
+
+function buildApiUrl(path: string): string {
+  if (window.location.port === '8080') {
+    return path
+  }
+
+  const protocol = window.location.protocol === 'https:' ? 'https' : 'http'
+  const host = window.location.hostname || 'localhost'
+  return `${protocol}://${host}:8080${path}`
 }
 
 function formatScore(value: number): string {
@@ -176,6 +193,24 @@ function createRoomSession(): void {
     socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode }))
   }
 
+  renderApp()
+}
+
+async function openHostFlow(): Promise<void> {
+  try {
+    const response = await fetch(buildApiUrl('/auth/session'), { credentials: 'include' })
+    const payload = await response.json()
+    state.account = payload.user ?? null
+  } catch {
+    state.account = null
+  }
+
+  if (state.account?.emailVerified) {
+    createRoomSession()
+    return
+  }
+
+  state.screen = 'membership'
   renderApp()
 }
 
@@ -304,11 +339,97 @@ function renderWelcome(): void {
 
   root.querySelector('[data-role="create-room"]')?.addEventListener('click', () => {
     state.customQuestion = ''
-    createRoomSession()
+    void openHostFlow()
   })
 
   root.querySelector('[data-role="join-room"]')?.addEventListener('click', () => {
     joinRoomSession()
+  })
+}
+
+function renderMembership(): void {
+  root.innerHTML = `
+    <main class="shell">
+      <section class="panel membership-panel">
+        <p class="eyebrow">Host membership</p>
+        <h1>Become a host</h1>
+        <p class="subtitle">Create an account to start and manage your own rooms.</p>
+
+        <form id="membership-form" class="membership-form">
+          <label for="membership-email">Email address</label>
+          <input id="membership-email" type="email" autocomplete="email" required />
+          <label for="membership-password">Password</label>
+          <input id="membership-password" type="password" autocomplete="new-password" minlength="8" required />
+          <label class="membership-confirm-field" for="membership-confirm">Confirm password</label>
+          <input class="membership-confirm-field" id="membership-confirm" type="password" autocomplete="new-password" minlength="8" />
+          <p class="membership-error" data-role="membership-error" aria-live="polite"></p>
+          <button class="primary-button" type="submit" data-role="membership-submit">Create account</button>
+        </form>
+
+        <div class="membership-actions">
+          <button class="ghost-button" type="button" data-role="membership-toggle">Already have an account? Log in</button>
+          <button class="ghost-button" type="button" data-role="membership-back">Back</button>
+        </div>
+      </section>
+    </main>
+  `
+
+  let loginMode = false
+  const form = root.querySelector<HTMLFormElement>('#membership-form')
+  const error = root.querySelector<HTMLElement>('[data-role="membership-error"]')
+  const submit = root.querySelector<HTMLButtonElement>('[data-role="membership-submit"]')
+  const toggle = root.querySelector<HTMLButtonElement>('[data-role="membership-toggle"]')
+  const confirmFields = root.querySelectorAll<HTMLElement>('.membership-confirm-field')
+
+  toggle?.addEventListener('click', () => {
+    loginMode = !loginMode
+    confirmFields.forEach((field) => { field.hidden = loginMode })
+    submit!.textContent = loginMode ? 'Log in' : 'Create account'
+    toggle.textContent = loginMode ? 'Need an account? Sign up' : 'Already have an account? Log in'
+  })
+
+  root.querySelector('[data-role="membership-back"]')?.addEventListener('click', () => {
+    state.screen = 'welcome'
+    renderApp()
+  })
+
+  form?.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const email = root.querySelector<HTMLInputElement>('#membership-email')?.value.trim() ?? ''
+    const password = root.querySelector<HTMLInputElement>('#membership-password')?.value ?? ''
+    const confirmation = root.querySelector<HTMLInputElement>('#membership-confirm')?.value ?? ''
+
+    if (!loginMode && password !== confirmation) {
+      error!.textContent = 'Passwords do not match.'
+      return
+    }
+
+    submit!.disabled = true
+    error!.textContent = ''
+    try {
+      const response = await fetch(buildApiUrl(loginMode ? '/auth/login' : '/auth/signup'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      })
+      const payload = await response.json()
+      if (!response.ok) {
+        error!.textContent = payload.error || 'Unable to continue.'
+        return
+      }
+
+      if (loginMode) {
+        window.location.reload()
+        return
+      }
+
+      error!.textContent = 'Account created. Verify your email, then log in to host a room.'
+    } catch {
+      error!.textContent = 'The account service is unavailable.'
+    } finally {
+      submit!.disabled = false
+    }
   })
 }
 
@@ -564,14 +685,16 @@ function renderPlayerAnswering(): void {
         <p class="eyebrow">Round ${state.answerRoundNumber}</p>
         <h1>${state.question}</h1>
 
-        <div class="answer-box">
-          <label for="player-answer">Write your answer</label>
-          <textarea id="player-answer" rows="4" placeholder="Type your answer here..." ${alreadySubmitted ? 'disabled' : ''}></textarea>
-        </div>
+        ${alreadySubmitted
+          ? '<div class="mini-card"><span>Thank you for submitting your response</span></div>'
+          : `
+            <div class="answer-box">
+              <label for="player-answer">Write your answer</label>
+              <textarea id="player-answer" rows="4" placeholder="Type your answer here..."></textarea>
+            </div>
 
-        <button class="primary-button" type="button" data-role="submit-answer" ${alreadySubmitted ? 'disabled' : ''}>Submit answer</button>
-
-        ${alreadySubmitted ? '<div class="mini-card"><span>Waiting for other participants...</span></div>' : ''}
+            <button class="primary-button" type="button" data-role="submit-answer">Submit answer</button>
+          `}
 
         <div class="mini-card">
           <span>Playing as</span>
@@ -611,13 +734,13 @@ function renderPlayerGuessing(): void {
         </div>
 
         <div class="answer-reveal">
-          <span>Random answer</span>
+          <span>Someone answere was this:</span>
           <strong>${state.selectedAnswer}</strong>
         </div>
 
         <div class="turn-box">
           <p>Current turn</p>
-          <h2>Choose who wrote it</h2>
+          <h2>Guess who wrote it</h2>
         </div>
 
         <div class="guess-grid">
@@ -701,7 +824,15 @@ function renderRoundEnd(): void {
             .join('')}
         </div>
 
-        ${state.role === 'host' ? '<button class="primary-button next-round" type="button" data-role="next-round">Next round</button>' : ''}
+        ${(() => {
+          const myResult = state.roundResults.find((result) => result.guesserName === getCurrentPlayer()?.name)
+          if (!myResult) {
+            return ''
+          }
+          return `<div class="mini-card"><span>${myResult.correct ? '🎉 You earned more points!' : '😅 You missed it'}</span></div>`
+        })()}
+
+        ${state.role === 'host' ? `<button class="primary-button next-round" type="button" data-role="next-round">${state.answerRoundNumber >= state.answers.length ? 'Go to final score board' : 'Next round'}</button>` : ''}
       </section>
     </main>
   `
@@ -767,6 +898,11 @@ function renderGameEnd(): void {
 function renderApp(): void {
   if (state.screen === 'welcome') {
     renderWelcome()
+    return
+  }
+
+  if (state.screen === 'membership') {
+    renderMembership()
     return
   }
 
