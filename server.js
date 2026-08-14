@@ -42,7 +42,7 @@ function makeRoomState(room) {
   return {
     code: room.code,
     phase: room.phase,
-    roundNumber: room.roundNumber,
+    answerRoundNumber: room.answerRoundNumber,
     question: room.question,
     answerAuthorId: room.answerAuthorId,
     selectedAnswer: room.selectedAnswer,
@@ -95,7 +95,7 @@ function createRoom({ hostName }) {
   const room = {
     code,
     phase: 'lobby',
-    roundNumber: 0,
+    answerRoundNumber: 0,
     question: '',
     answerAuthorId: null,
     selectedAnswer: '',
@@ -149,8 +149,8 @@ function startRound(room, customQuestion = '') {
   const trimmedQuestion = (customQuestion || '').trim();
   const selectedQuestion = trimmedQuestion || questionBank[Math.floor(Math.random() * questionBank.length)];
 
-  room.roundNumber = 1;
-  room.phase = 'answer';
+  room.answerRoundNumber = 1;
+  room.phase = 'answer-collection';
   room.question = selectedQuestion;
   room.selectedAnswer = '';
   room.answerAuthorId = null;
@@ -174,7 +174,7 @@ function prepareCurrentAnswer(room) {
   const currentAnswer = room.answerQueue[room.currentAnswerIndex];
 
   if (!currentAnswer) {
-    room.phase = 'leaderboard';
+    room.phase = 'game-end';
     room.timeLeft = 0;
     room.answerAuthorId = null;
     room.selectedAnswer = '';
@@ -186,19 +186,19 @@ function prepareCurrentAnswer(room) {
   room.selectedAnswer = currentAnswer.text;
   room.guesses = [];
   room.activeGuesserIndex = 0;
-  room.roundNumber = room.currentAnswerIndex + 1;
+  room.answerRoundNumber = room.currentAnswerIndex + 1;
   room.timeLeft = 0;
   broadcastRoom(room);
 }
 
 function lockAnswers(room) {
-  if (room.phase !== 'answer' || room.answers.length === 0) {
+  if (room.phase !== 'answer-collection' || room.answers.length === 0) {
     return;
   }
 
   room.answerQueue = room.answers.map((answer) => ({ ...answer }));
   room.currentAnswerIndex = 0;
-  room.phase = 'guess';
+  room.phase = 'guessing';
   prepareCurrentAnswer(room);
 }
 
@@ -220,7 +220,7 @@ function moveToNextAnswer(room) {
 }
 
 function calculateRoundScores(room) {
-  if (room.phase !== 'guess' || !room.answerQueue[room.currentAnswerIndex]) {
+  if (room.phase !== 'guessing' || !room.answerQueue[room.currentAnswerIndex]) {
     return;
   }
 
@@ -244,21 +244,21 @@ function calculateRoundScores(room) {
     };
   });
 
-  room.phase = 'leaderboard';
+  room.phase = 'round-end';
   room.timeLeft = 0;
-  room.roundNumber = room.currentAnswerIndex + 1;
+  room.answerRoundNumber = room.currentAnswerIndex + 1;
   broadcastRoom(room);
 }
 
 function advanceGuessRound(room) {
-  if (room.phase !== 'leaderboard') {
+  if (room.phase !== 'round-end') {
     return;
   }
 
   const nextIndex = room.currentAnswerIndex + 1;
 
   if (nextIndex >= room.answerQueue.length) {
-    room.phase = 'leaderboard';
+    room.phase = 'game-end';
     room.timeLeft = 0;
     room.answerAuthorId = null;
     room.selectedAnswer = '';
@@ -267,14 +267,14 @@ function advanceGuessRound(room) {
   }
 
   room.currentAnswerIndex = nextIndex;
-  room.phase = 'guess';
+  room.phase = 'guessing';
   room.guesses = [];
   room.roundResults = [];
   prepareCurrentAnswer(room);
 }
 
 function revealAnswer(room) {
-  room.phase = 'guess';
+  room.phase = 'guessing';
   room.timeLeft = 0;
   if (!room.answerQueue.length) {
     room.answerQueue = room.answers.map((answer) => ({ ...answer }));
@@ -286,7 +286,7 @@ function revealAnswer(room) {
 }
 
 function submitAnswer(room, playerId, answerText) {
-  if (room.phase !== 'answer') {
+  if (room.phase !== 'answer-collection') {
     return;
   }
 
@@ -315,7 +315,7 @@ function submitAnswer(room, playerId, answerText) {
 }
 
 function evaluateGuess(room, guesserId, guessTargetId) {
-  if (room.phase !== 'guess') {
+  if (room.phase !== 'guessing') {
     return;
   }
 

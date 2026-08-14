@@ -1,7 +1,7 @@
 import './style.css'
 
 type Role = 'host' | 'player'
-type Screen = 'welcome' | 'lobby' | 'host-round' | 'player-answer' | 'player-guess' | 'leaderboard'
+type Screen = 'welcome' | 'lobby' | 'host-managing' | 'player-answering' | 'player-guessing' | 'round-end' | 'game-end'
 
 type Player = {
   id: string
@@ -27,8 +27,8 @@ type RoundResult = {
 
 type RoomState = {
   code: string
-  phase: 'lobby' | 'answer' | 'guess' | 'leaderboard'
-  roundNumber: number
+  phase: 'lobby' | 'answer-collection' | 'guessing' | 'round-end' | 'game-end'
+  answerRoundNumber: number
   question: string
   selectedAnswer: string
   answerAuthorId: string | null
@@ -56,7 +56,7 @@ const state = {
   playerName: '',
   currentPlayerId: '',
   players: [] as Player[],
-  roundNumber: 0,
+  answerRoundNumber: 0,
   question: '',
   selectedAnswer: '',
   answerAuthorId: null as string | null,
@@ -117,7 +117,7 @@ function applyRoomState(serverState: Partial<RoomState>): void {
 
   state.roomCode = serverState.code || state.roomCode
   state.players = serverState.players ?? state.players
-  state.roundNumber = serverState.roundNumber ?? state.roundNumber
+  state.answerRoundNumber = serverState.answerRoundNumber ?? state.answerRoundNumber
   state.question = serverState.question ?? state.question
   state.selectedAnswer = serverState.selectedAnswer ?? state.selectedAnswer
   state.answerAuthorId = serverState.answerAuthorId ?? state.answerAuthorId
@@ -128,8 +128,14 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   state.timeLeft = serverState.timeLeft ?? state.timeLeft
   state.phase = serverState.phase ?? state.phase
   state.hasSubmittedAnswer = state.answers.some((answer) => answer.playerId === state.currentPlayerId)
-  state.selectedGuessId =
-    state.guesses.find((guess) => guess.guesserId === state.currentPlayerId)?.guessedId ?? state.selectedGuessId
+  
+  // Reset selected guess if transitioning to a new guessing phase or if current guess is no longer in the guesses array
+  if (state.phase === 'guessing') {
+    const playerGuessInRound = state.guesses.find((guess) => guess.guesserId === state.currentPlayerId)
+    state.selectedGuessId = playerGuessInRound?.guessedId ?? null
+  } else {
+    state.selectedGuessId = null
+  }
 
   if (state.role === 'host' && serverState.hostId) {
     state.currentPlayerId = serverState.hostId
@@ -141,12 +147,14 @@ function applyRoomState(serverState: Partial<RoomState>): void {
 
   if (state.phase === 'lobby') {
     state.screen = 'lobby'
-  } else if (state.phase === 'answer') {
-    state.screen = state.role === 'host' ? 'host-round' : 'player-answer'
-  } else if (state.phase === 'guess') {
-    state.screen = state.role === 'host' ? 'host-round' : 'player-guess'
-  } else if (state.phase === 'leaderboard') {
-    state.screen = 'leaderboard'
+  } else if (state.phase === 'answer-collection') {
+    state.screen = state.role === 'host' ? 'host-managing' : 'player-answering'
+  } else if (state.phase === 'guessing') {
+    state.screen = state.role === 'host' ? 'host-managing' : 'player-guessing'
+  } else if (state.phase === 'round-end') {
+    state.screen = 'round-end'
+  } else if (state.phase === 'game-end') {
+    state.screen = 'game-end'
   }
 
   renderApp()
@@ -380,7 +388,7 @@ function renderLobby(): void {
               <div class="rule-item"><strong>1.</strong><span>Wait for the host to provide a question.</span></div>
               <div class="rule-item"><strong>2.</strong><span>Answer the question, then wait for everyone else to submit their answers.</span></div>
               <div class="rule-item"><strong>3.</strong><span>Each person tries to guess who wrote each answer.</span></div>
-              <div class="rule-item"><strong>4.</strong><span>Correct guesses with quick reactions score more points.</span></div>
+              <div class="rule-item"><strong>4.</strong><span>Correct guesses earn 120 points each.</span></div>
             </div>
           </section>
           `}
@@ -431,7 +439,7 @@ function renderLobby(): void {
   })
 }
 
-function renderHostRound(): void {
+function renderHostManaging(): void {
   const visiblePlayers = state.players.filter((player) => player.id !== state.currentPlayerId)
   const guessMap = new Map(state.guesses.map((guess) => [guess.guesserId, guess]))
 
@@ -440,18 +448,18 @@ function renderHostRound(): void {
       <section class="panel round-panel">
         <div class="round-header">
           <div>
-            <p class="eyebrow">Round ${state.roundNumber}</p>
+            <p class="eyebrow">Round ${state.answerRoundNumber}</p>
             <h1>${state.question}</h1>
           </div>
-          <div class="timer-box">${state.phase === 'answer' ? 'Answer phase' : 'Guess phase'}</div>
+          <div class="timer-box">${state.phase === 'answer-collection' ? 'Answer collection' : 'Guessing phase'}</div>
         </div>
 
         <div class="answer-reveal">
-          <span>${state.phase === 'answer' ? 'Hidden answer to reveal' : 'Random answer'}</span>
-          <strong>${state.phase === 'answer' ? 'Waiting for reveal...' : state.selectedAnswer}</strong>
+          <span>${state.phase === 'answer-collection' ? 'Hidden answer to reveal' : 'Random answer'}</span>
+          <strong>${state.phase === 'answer-collection' ? 'Waiting for reveal...' : state.selectedAnswer}</strong>
         </div>
 
-        ${state.phase === 'answer'
+        ${state.phase === 'answer-collection'
           ? `
             <div class="turn-box">
               <p>Answer collection</p>
@@ -480,7 +488,6 @@ function renderHostRound(): void {
             </div>
             <div class="host-actions-row">
               <button class="primary-button" type="button" data-role="calculate-score">Stop timer and calculate score</button>
-              <button class="secondary-button" type="button" data-role="advance-answer">Continue to next round of guessing</button>
             </div>
           `}
       </section>
@@ -540,10 +547,6 @@ function renderHostRound(): void {
     calculateScores()
   })
 
-  root.querySelector<HTMLButtonElement>('[data-role="advance-answer"]')?.addEventListener('click', () => {
-    advanceAnswer()
-  })
-
   root.querySelectorAll<HTMLButtonElement>('[data-guess-id]').forEach((button) => {
     button.addEventListener('click', () => {
       const guessId = button.dataset.guessId ?? ''
@@ -552,13 +555,13 @@ function renderHostRound(): void {
   })
 }
 
-function renderPlayerAnswer(): void {
+function renderPlayerAnswering(): void {
   const alreadySubmitted = state.answers.some((entry) => entry.playerId === state.currentPlayerId)
 
   root.innerHTML = `
     <main class="shell">
       <section class="panel player-answer-panel">
-        <p class="eyebrow">Round ${state.roundNumber}</p>
+        <p class="eyebrow">Round ${state.answerRoundNumber}</p>
         <h1>${state.question}</h1>
 
         <div class="answer-box">
@@ -592,7 +595,7 @@ function renderPlayerAnswer(): void {
   })
 }
 
-function renderPlayerGuess(): void {
+function renderPlayerGuessing(): void {
   const guessOptions = state.players.filter((player) => player.id !== state.currentPlayerId)
   const selectedGuessId = state.selectedGuessId ?? state.guesses.find((entry) => entry.guesserId === state.currentPlayerId)?.guessedId ?? null
 
@@ -601,10 +604,10 @@ function renderPlayerGuess(): void {
       <section class="panel round-panel">
         <div class="round-header">
           <div>
-            <p class="eyebrow">Your turn</p>
+            <p class="eyebrow">Round ${state.answerRoundNumber}</p>
             <h1>${state.question}</h1>
           </div>
-          <div class="timer-box">Guess who wrote it</div>
+          <div class="timer-box">Guessing phase</div>
         </div>
 
         <div class="answer-reveal">
@@ -647,14 +650,14 @@ function renderPlayerGuess(): void {
   })
 }
 
-function renderLeaderboard(): void {
+function renderRoundEnd(): void {
   const sortedPlayers = [...state.players].sort((a, b) => b.score - a.score)
 
   root.innerHTML = `
     <main class="shell">
       <section class="panel summary-panel">
         <p class="eyebrow">Round complete</p>
-        <h1>Final standings</h1>
+        <h1>Round standings</h1>
 
         <div class="leaderboard">
           ${sortedPlayers
@@ -699,7 +702,60 @@ function renderLeaderboard(): void {
   `
 
   root.querySelector<HTMLButtonElement>('[data-role="next-round"]')?.addEventListener('click', () => {
-    startRound()
+    advanceAnswer()
+  })
+}
+
+function renderGameEnd(): void {
+  const sortedPlayers = [...state.players].sort((a, b) => b.score - a.score)
+  const topThree = sortedPlayers.slice(0, 3)
+
+  root.innerHTML = `
+    <main class="shell">
+      <section class="panel summary-panel">
+        <p class="eyebrow">Game complete</p>
+        <h1>🎉 Game finished!</h1>
+
+        <div class="leaderboard">
+          ${sortedPlayers
+            .map(
+              (player, index) => `
+                <div class="leaderboard-row ${index === 0 ? 'winner' : index === 1 ? 'second' : index === 2 ? 'third' : ''}">
+                  <span>#${index + 1} ${player.name}</span>
+                  <strong>${formatScore(player.score)}</strong>
+                </div>
+              `,
+            )
+            .join('')}
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <h2>Top performers</h2>
+        </div>
+
+        <div class="result-list">
+          ${topThree
+            .map(
+              (player, index) => `
+                <div class="result-row success">
+                  <span>${['🥇 Gold', '🥈 Silver', '🥉 Bronze'][index]} — ${player.name}</span>
+                  <strong>${formatScore(player.score)}</strong>
+                </div>
+              `,
+            )
+            .join('')}
+        </div>
+      </section>
+
+      ${state.role === 'host' ? '<button class="primary-button next-round" type="button" data-role="new-game">Start a new game</button>' : ''}
+    </main>
+  `
+
+  root.querySelector<HTMLButtonElement>('[data-role="new-game"]')?.addEventListener('click', () => {
+    state.customQuestion = ''
+    renderLobby()
   })
 }
 
@@ -714,22 +770,30 @@ function renderApp(): void {
     return
   }
 
-  if (state.screen === 'host-round') {
-    renderHostRound()
+  if (state.screen === 'host-managing') {
+    renderHostManaging()
     return
   }
 
-  if (state.screen === 'player-answer') {
-    renderPlayerAnswer()
+  if (state.screen === 'player-answering') {
+    renderPlayerAnswering()
     return
   }
 
-  if (state.screen === 'player-guess') {
-    renderPlayerGuess()
+  if (state.screen === 'player-guessing') {
+    renderPlayerGuessing()
     return
   }
 
-  renderLeaderboard()
+  if (state.screen === 'round-end') {
+    renderRoundEnd()
+    return
+  }
+
+  if (state.screen === 'game-end') {
+    renderGameEnd()
+    return
+  }
 }
 
 socket.addEventListener('open', () => {
