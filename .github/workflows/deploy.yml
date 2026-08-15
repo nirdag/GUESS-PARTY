@@ -41,9 +41,6 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Set Node runtime
-        run: az webapp config set --name "$AZURE_WEBAPP_NAME" --resource-group rg-guess-party-prod --linux-fx-version "NODE|22-lts"
-
       - name: Deploy to Azure App Service
         uses: azure/webapps-deploy@v3
         with:
