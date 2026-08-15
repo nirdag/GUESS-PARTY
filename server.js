@@ -290,6 +290,25 @@ function startRound(room, customQuestion = '') {
   broadcastRoom(room);
 }
 
+function startNewGame(room) {
+  room.phase = 'lobby';
+  room.answerRoundNumber = 0;
+  room.question = '';
+  room.answerAuthorId = null;
+  room.selectedAnswer = '';
+  room.activeGuesserIndex = 0;
+  room.playerTurnIndex = 0;
+  room.timeLeft = 0;
+  room.answers = [];
+  room.guesses = [];
+  room.answerQueue = [];
+  room.currentAnswer = null;
+  room.roundResults = [];
+  // player scores are intentionally left untouched so totals keep aggregating across games
+
+  broadcastRoom(room);
+}
+
 function prepareCurrentAnswer(room) {
   if (room.answerQueue.length === 0) {
     room.currentAnswer = null;
@@ -687,6 +706,14 @@ wss.on('connection', (socket, request) => {
           break;
         }
 
+        case 'new-game': {
+          if (!room || room.hostAccountId !== socket.user?.id) {
+            return;
+          }
+          startNewGame(room);
+          break;
+        }
+
         default: {
           socket.send(JSON.stringify({ type: 'error', message: 'Unknown message type' }));
         }
@@ -752,6 +779,8 @@ export {
   reconnectRoom,
   expireDisconnectedMemberships,
   reconnectGracePeriodMs,
+  startRound,
+  startNewGame,
 };
 
 // Graceful shutdown for testing

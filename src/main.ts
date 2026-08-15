@@ -397,6 +397,14 @@ function advanceAnswer(): void {
   sendSocketMessage('advance-answer')
 }
 
+function requestNewGame(): void {
+  if (!state.roomCode) {
+    return
+  }
+
+  sendSocketMessage('new-game')
+}
+
 function renderIdentityBanner(): string {
   const displayName = state.playerName || 'Guest'
   const roleLabel = state.role === 'host' ? 'Host' : 'Player'
@@ -1007,7 +1015,7 @@ function renderGameEnd(): void {
 
   root.querySelector<HTMLButtonElement>('[data-role="new-game"]')?.addEventListener('click', () => {
     state.customQuestion = ''
-    renderLobby()
+    requestNewGame()
   })
 }
 

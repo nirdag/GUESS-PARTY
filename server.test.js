@@ -13,6 +13,8 @@ import {
   reconnectRoom,
   expireDisconnectedMemberships,
   reconnectGracePeriodMs,
+  startRound,
+  startNewGame,
 } from './server.js';
 
 // Mock room/player creation for testing
@@ -343,6 +345,59 @@ describe('HIGH: Game Flow Transitions', () => {
     advanceGuessRound(room);
 
     expect(room.guesses).toHaveLength(0);
+  });
+});
+
+describe('CRITICAL: Start New Game', () => {
+  let room;
+
+  beforeEach(() => {
+    room = createTestRoom();
+  });
+
+  it('startNewGame resets round state to lobby but keeps player scores', () => {
+    const player1 = createTestPlayer('p1', 'Alice');
+    const player2 = createTestPlayer('p2', 'Bob');
+    player1.score = 240;
+    player2.score = 120;
+    room.players = [player1, player2];
+    room.phase = 'game-end';
+    room.question = 'Old question?';
+    room.answers = [{ playerId: 'p1', playerName: 'Alice', text: 'old answer' }];
+    room.guesses = [{ guesserId: 'p2', guesserName: 'Bob', guessedId: 'p1', guessedName: 'Alice' }];
+    room.answerQueue = [{ playerId: 'p2', text: 'old answer 2', playerName: 'Bob' }];
+    room.roundResults = [{ guesserName: 'Bob', guessedName: 'Alice', correct: true, points: 120 }];
+    room.answerAuthorId = 'p1';
+    room.selectedAnswer = 'old answer';
+    room.answerRoundNumber = 2;
+
+    startNewGame(room);
+
+    expect(room.phase).toBe('lobby');
+    expect(room.question).toBe('');
+    expect(room.answers).toHaveLength(0);
+    expect(room.guesses).toHaveLength(0);
+    expect(room.answerQueue).toHaveLength(0);
+    expect(room.roundResults).toHaveLength(0);
+    expect(room.answerAuthorId).toBeNull();
+    expect(room.selectedAnswer).toBe('');
+    expect(room.answerRoundNumber).toBe(0);
+    expect(player1.score).toBe(240);
+    expect(player2.score).toBe(120);
+  });
+
+  it('host can start a fresh round with a new question after startNewGame', () => {
+    const player1 = createTestPlayer('p1', 'Alice');
+    player1.score = 360;
+    room.players = [player1];
+    room.phase = 'game-end';
+
+    startNewGame(room);
+    startRound(room, 'Brand new question here');
+
+    expect(room.phase).toBe('answer-collection');
+    expect(room.question).toBe('Brand new question here');
+    expect(player1.score).toBe(360);
   });
 });
 
