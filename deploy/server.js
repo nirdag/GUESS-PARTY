@@ -45,6 +45,11 @@ const questionBank = [
 
 const rooms = new Map();
 const reconnectGracePeriodMs = 30 * 60 * 1000;
+const supportedLanguages = new Set(['en', 'he']);
+
+function normalizeLanguage(language) {
+  return supportedLanguages.has(language) ? language : 'en';
+}
 
 function createRoomCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -80,6 +85,7 @@ function makeRoomState(room) {
     guesses: room.guesses,
     roundResults: room.roundResults,
     hostId: room.hostId,
+    language: room.language,
   };
 }
 
@@ -205,7 +211,7 @@ function nextTurn(room) {
   }
 }
 
-function createRoom({ hostName, hostAccountId = null }) {
+function createRoom({ hostName, hostAccountId = null, language = 'en' }) {
   const code = createRoomCode();
   const room = {
     code,
@@ -229,6 +235,7 @@ function createRoom({ hostName, hostAccountId = null }) {
     hostReconnectToken: createReconnectToken(),
     hostDisconnectedAt: null,
     playerTurnIndex: 0,
+    language: normalizeLanguage(language),
   };
 
   rooms.set(code, room);
@@ -596,7 +603,7 @@ wss.on('connection', (socket, request) => {
             socket.send(JSON.stringify({ type: 'error', code: 'AUTH_REQUIRED', message: 'Log in to create a room.' }));
             return;
           }
-          const roomData = createRoom({ hostName: message.name || 'Host', hostAccountId: socket.user.id });
+          const roomData = createRoom({ hostName: message.name || 'Host', hostAccountId: socket.user.id, language: message.language });
           attachSocketToRoom(roomData, socket, roomData.hostId);
           sendRoomSession(socket, roomData, 'host', roomData.hostId, roomData.hostName, roomData.hostReconnectToken);
           socket.send(JSON.stringify({ type: 'room-state', state: makeRoomState(roomData) }));

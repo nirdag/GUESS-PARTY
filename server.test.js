@@ -15,6 +15,7 @@ import {
   reconnectGracePeriodMs,
   startRound,
   startNewGame,
+  makeRoomState,
 } from './server.js';
 
 // Mock room/player creation for testing
@@ -526,6 +527,28 @@ describe('MEDIUM: Room Management', () => {
     const found = findPlayerById(room, 'nonexistent');
 
     expect(found).toBeUndefined();
+  });
+});
+
+describe('MEDIUM: Room Language', () => {
+  it('defaults a new room to English when no language is given', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account' });
+
+    expect(room.language).toBe('en');
+    expect(makeRoomState(room).language).toBe('en');
+  });
+
+  it('stores a supported language chosen by the host', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', language: 'he' });
+
+    expect(room.language).toBe('he');
+    expect(makeRoomState(room).language).toBe('he');
+  });
+
+  it('falls back to English for an unsupported language code', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', language: 'fr' });
+
+    expect(room.language).toBe('en');
   });
 });
 

@@ -1,7 +1,8 @@
 import './style.css'
+import { type LanguageCode, getLanguage, languages, setLanguage, t } from './i18n'
 
 type Role = 'host' | 'player'
-type Screen = 'welcome' | 'membership' | 'lobby' | 'host-managing' | 'player-answering' | 'player-guessing' | 'round-end' | 'game-end'
+type Screen = 'welcome' | 'membership' | 'host-setup' | 'lobby' | 'host-managing' | 'player-answering' | 'player-guessing' | 'round-end' | 'game-end'
 
 type Account = {
   id: string
@@ -53,6 +54,7 @@ type RoomState = {
   roundResults: RoundResult[]
   hostId: string | null
   timeLeft: number
+  language: LanguageCode
 }
 
 const app = document.querySelector<HTMLDivElement>('#app')
@@ -127,6 +129,7 @@ const state = {
   customQuestion: '',
   selectedGuessId: null as string | null,
   hasSubmittedAnswer: false,
+  language: getLanguage(),
 }
 
 let queuedAction: (() => void) | null = null
@@ -161,7 +164,7 @@ function buildApiUrl(path: string): string {
 }
 
 function formatScore(value: number): string {
-  return `${value} pts`
+  return t('common.scorePts', { value })
 }
 
 function formatPlayerInitials(name: string): string {
@@ -226,6 +229,11 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   state.timeLeft = serverState.timeLeft ?? state.timeLeft
   state.phase = serverState.phase ?? state.phase
   state.hasSubmittedAnswer = state.answers.some((answer) => answer.playerId === state.currentPlayerId)
+
+  if (serverState.language) {
+    state.language = serverState.language
+    setLanguage(serverState.language)
+  }
   
   // Reset selected guess if transitioning to a new guessing phase or if current guess is no longer in the guesses array
   if (state.phase === 'guessing') {
@@ -258,22 +266,23 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   renderApp()
 }
 
-function createRoomSession(): void {
-  const rawName = window.prompt('Choose your display name for this room', state.playerName || 'Host') ?? 'Host'
-  const nextName = rawName.trim() || 'Host'
+function createRoomSession(name: string, language: LanguageCode): void {
+  const nextName = name.trim() || t('prompts.defaultHostName')
   state.playerName = nextName
   state.role = 'host'
+  state.language = language
+  setLanguage(language)
   shouldRestoreRoomSession = false
   clearStoredRoomSession()
   state.screen = 'lobby'
 
   if (socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode }))
+    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language }))
     return
   }
 
   queuedAction = () => {
-    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode }))
+    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language }))
   }
 
   renderApp()
@@ -289,7 +298,8 @@ async function openHostFlow(): Promise<void> {
   }
 
   if (state.account?.emailVerified) {
-    createRoomSession()
+    state.screen = 'host-setup'
+    renderApp()
     return
   }
 
@@ -298,13 +308,13 @@ async function openHostFlow(): Promise<void> {
 }
 
 function joinRoomSession(): void {
-  const rawName = window.prompt('Enter your player name', state.playerName || 'Player') ?? 'Player'
-  const name = rawName.trim() || 'Player'
-  const rawRoomCode = window.prompt('Enter the room code', state.roomCode || '') ?? ''
+  const rawName = window.prompt(t('prompts.enterPlayerName'), state.playerName || t('prompts.defaultPlayerName')) ?? t('prompts.defaultPlayerName')
+  const name = rawName.trim() || t('prompts.defaultPlayerName')
+  const rawRoomCode = window.prompt(t('prompts.enterRoomCode'), state.roomCode || '') ?? ''
   const roomCode = rawRoomCode.trim().toUpperCase()
 
   if (!roomCode) {
-    window.alert('A room code is required to join.')
+    window.alert(t('prompts.roomCodeRequired'))
     return
   }
 
@@ -335,12 +345,12 @@ function startRound(): void {
     const questionText = state.customQuestion.trim()
 
     if (!questionText) {
-      window.alert('Type a question before starting the round.')
+      window.alert(t('prompts.typeQuestionFirst'))
       return
     }
 
     if (questionText.length < 8) {
-      window.alert('Question should be at least 8 characters long.')
+      window.alert(t('prompts.questionTooShort'))
       return
     }
   }
@@ -406,12 +416,12 @@ function requestNewGame(): void {
 }
 
 function renderIdentityBanner(): string {
-  const displayName = state.playerName || 'Guest'
-  const roleLabel = state.role === 'host' ? 'Host' : 'Player'
+  const displayName = state.playerName || t('common.guest')
+  const roleLabel = state.role === 'host' ? t('common.host') : t('common.player')
 
   return `
     <div class="identity-banner">
-      <span>Playing as</span>
+      <span>${t('common.playingAs')}</span>
       <strong>${displayName}</strong>
       <span class="identity-role">${roleLabel}</span>
     </div>
@@ -422,21 +432,21 @@ function renderWelcome(): void {
   root.innerHTML = `
     <main class="shell">
       <section class="panel welcome-panel">
-        <p class="eyebrow">Guess Party</p>
-        <h1>Who wrote the answer?</h1>
-        <p class="subtitle">A friendly group game for family and friends.</p>
+        <p class="eyebrow">${t('welcome.eyebrow')}</p>
+        <h1>${t('welcome.title')}</h1>
+        <p class="subtitle">${t('welcome.subtitle')}</p>
 
         <div class="welcome-grid">
           <button class="feature-card primary" type="button" data-role="create-room">
-            <span class="card-tag">Host</span>
-            <strong>Create room</strong>
-            <small>Start the round and manage the game flow.</small>
+            <span class="card-tag">${t('welcome.hostTag')}</span>
+            <strong>${t('welcome.createRoom')}</strong>
+            <small>${t('welcome.createRoomHint')}</small>
           </button>
 
           <button class="feature-card secondary" type="button" data-role="join-room">
-            <span class="card-tag">Player</span>
-            <strong>Join room</strong>
-            <small>Enter your name and play with the group.</small>
+            <span class="card-tag">${t('welcome.playerTag')}</span>
+            <strong>${t('welcome.joinRoom')}</strong>
+            <small>${t('welcome.joinRoomHint')}</small>
           </button>
         </div>
       </section>
@@ -453,28 +463,68 @@ function renderWelcome(): void {
   })
 }
 
+function renderHostSetup(): void {
+  const languageOptions = Object.values(languages)
+    .map((meta) => `<option value="${meta.code}" ${meta.code === state.language ? 'selected' : ''}>${t(`languages.${meta.code}`)}</option>`)
+    .join('')
+
+  root.innerHTML = `
+    <main class="shell">
+      <section class="panel membership-panel">
+        <p class="eyebrow">${t('hostSetup.eyebrow')}</p>
+        <h1>${t('hostSetup.title')}</h1>
+        <p class="subtitle">${t('hostSetup.subtitle')}</p>
+
+        <form id="host-setup-form" class="membership-form">
+          <label for="host-setup-name">${t('hostSetup.nameLabel')}</label>
+          <input id="host-setup-name" type="text" placeholder="${t('hostSetup.namePlaceholder')}" value="${state.playerName}" required />
+          <label for="host-setup-language">${t('hostSetup.languageLabel')}</label>
+          <select id="host-setup-language">${languageOptions}</select>
+          <button class="primary-button" type="submit">${t('hostSetup.submit')}</button>
+        </form>
+
+        <div class="membership-actions">
+          <button class="ghost-button" type="button" data-role="host-setup-back">${t('hostSetup.back')}</button>
+        </div>
+      </section>
+    </main>
+  `
+
+  root.querySelector('[data-role="host-setup-back"]')?.addEventListener('click', () => {
+    state.screen = 'welcome'
+    renderApp()
+  })
+
+  root.querySelector<HTMLFormElement>('#host-setup-form')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const name = root.querySelector<HTMLInputElement>('#host-setup-name')?.value ?? ''
+    const language = (root.querySelector<HTMLSelectElement>('#host-setup-language')?.value ?? 'en') as LanguageCode
+    createRoomSession(name, language)
+  })
+}
+
 function renderMembership(): void {
   root.innerHTML = `
     <main class="shell">
       <section class="panel membership-panel">
-        <p class="eyebrow">Host membership</p>
-        <h1>Become a host</h1>
-        <p class="subtitle">Create an account to start and manage your own rooms.</p>
+        <p class="eyebrow">${t('membership.eyebrow')}</p>
+        <h1>${t('membership.title')}</h1>
+        <p class="subtitle">${t('membership.subtitle')}</p>
 
         <form id="membership-form" class="membership-form">
-          <label for="membership-email">Email address</label>
+          <label for="membership-email">${t('membership.emailLabel')}</label>
           <input id="membership-email" type="email" autocomplete="email" required />
-          <label for="membership-password">Password</label>
+          <label for="membership-password">${t('membership.passwordLabel')}</label>
           <input id="membership-password" type="password" autocomplete="new-password" minlength="8" required />
-          <label class="membership-confirm-field" for="membership-confirm">Confirm password</label>
+          <label class="membership-confirm-field" for="membership-confirm">${t('membership.confirmLabel')}</label>
           <input class="membership-confirm-field" id="membership-confirm" type="password" autocomplete="new-password" minlength="8" />
           <p class="membership-error" data-role="membership-error" aria-live="polite"></p>
-          <button class="primary-button" type="submit" data-role="membership-submit">Create account</button>
+          <button class="primary-button" type="submit" data-role="membership-submit">${t('membership.createAccount')}</button>
         </form>
 
         <div class="membership-actions">
-          <button class="ghost-button" type="button" data-role="membership-toggle">Already have an account? Log in</button>
-          <button class="ghost-button" type="button" data-role="membership-back">Back</button>
+          <button class="ghost-button" type="button" data-role="membership-toggle">${t('membership.toggleToLogin')}</button>
+          <button class="ghost-button" type="button" data-role="membership-back">${t('membership.back')}</button>
         </div>
       </section>
     </main>
@@ -490,8 +540,8 @@ function renderMembership(): void {
   toggle?.addEventListener('click', () => {
     loginMode = !loginMode
     confirmFields.forEach((field) => { field.hidden = loginMode })
-    submit!.textContent = loginMode ? 'Log in' : 'Create account'
-    toggle.textContent = loginMode ? 'Need an account? Sign up' : 'Already have an account? Log in'
+    submit!.textContent = loginMode ? t('membership.login') : t('membership.createAccount')
+    toggle.textContent = loginMode ? t('membership.toggleToSignup') : t('membership.toggleToLogin')
   })
 
   root.querySelector('[data-role="membership-back"]')?.addEventListener('click', () => {
@@ -506,7 +556,7 @@ function renderMembership(): void {
     const confirmation = root.querySelector<HTMLInputElement>('#membership-confirm')?.value ?? ''
 
     if (!loginMode && password !== confirmation) {
-      error!.textContent = 'Passwords do not match.'
+      error!.textContent = t('membership.passwordsMismatch')
       return
     }
 
@@ -521,7 +571,7 @@ function renderMembership(): void {
       })
       const payload = await response.json()
       if (!response.ok) {
-        error!.textContent = payload.error || 'Unable to continue.'
+        error!.textContent = payload.error || t('membership.unableToContinue')
         return
       }
 
@@ -530,9 +580,9 @@ function renderMembership(): void {
         return
       }
 
-      error!.textContent = 'Account created. Verify your email, then log in to host a room.'
+      error!.textContent = t('membership.accountCreated')
     } catch {
-      error!.textContent = 'The account service is unavailable.'
+      error!.textContent = t('membership.serviceUnavailable')
     } finally {
       submit!.disabled = false
     }
@@ -548,24 +598,24 @@ function renderLobby(): void {
       ${renderIdentityBanner()}
       <section class="panel hero-panel">
         <div class="hero-copy">
-          <p class="eyebrow">${state.role === 'host' ? 'Host view' : 'Player view'}</p>
-          <h1>${state.role === 'host' ? 'Room ready' : 'Waiting in the room'}</h1>
-          <p class="subtitle">Room code: ${state.roomCode}</p>
+          <p class="eyebrow">${state.role === 'host' ? t('lobby.hostView') : t('lobby.playerView')}</p>
+          <h1>${state.role === 'host' ? t('lobby.roomReady') : t('lobby.waitingInRoom')}</h1>
+          <p class="subtitle">${t('lobby.roomCodeLine', { code: state.roomCode })}</p>
         </div>
 
         <div class="room-card">
-          <span class="chip">Room code</span>
+          <span class="chip">${t('lobby.roomCodeChip')}</span>
           <strong>${state.roomCode}</strong>
           ${state.role === 'host'
-            ? `<button class="primary-button" type="button" data-role="start-round" ${hostQuestionIsValid ? '' : 'disabled'}>Start round</button>`
-            : '<div class="chip">Waiting for the host to begin</div>'}
+            ? `<button class="primary-button" type="button" data-role="start-round" ${hostQuestionIsValid ? '' : 'disabled'}>${t('lobby.startRound')}</button>`
+            : `<div class="chip">${t('lobby.waitingForHost')}</div>`}
         </div>
       </section>
 
       <section class="panel">
         <div class="section-head">
-          <h2>Players</h2>
-          <span>${state.players.length} joined</span>
+          <h2>${t('lobby.players')}</h2>
+          <span>${t('lobby.joinedCount', { count: state.players.length })}</span>
         </div>
 
         <div class="player-list">
@@ -586,44 +636,44 @@ function renderLobby(): void {
         ? `
           <section class="panel">
             <div class="section-head">
-              <h2>Round prompt</h2>
-              <span>${state.customQuestion.trim() ? 'Ready to play' : 'Required'}</span>
+              <h2>${t('lobby.roundPrompt')}</h2>
+              <span>${state.customQuestion.trim() ? t('lobby.readyToPlay') : t('lobby.required')}</span>
             </div>
 
             <form id="host-question-form" class="host-question-form">
-              <label for="host-question">Type the question for this round</label>
-              <textarea id="host-question" rows="3" maxlength="220" placeholder="Example: What is the most creative way to spend a rainy Sunday with friends?">${state.customQuestion}</textarea>
+              <label for="host-question">${t('lobby.questionLabel')}</label>
+              <textarea id="host-question" rows="3" maxlength="220" placeholder="${t('lobby.questionPlaceholder')}">${state.customQuestion}</textarea>
               <div class="host-question-actions">
-                <button class="secondary-button" type="submit">Save question</button>
-                <button class="ghost-button" type="button" data-role="clear-question">Clear</button>
+                <button class="secondary-button" type="submit">${t('lobby.saveQuestion')}</button>
+                <button class="ghost-button" type="button" data-role="clear-question">${t('lobby.clear')}</button>
               </div>
             </form>
 
             <div class="rules-list">
-              <div class="rule-item"><strong>1.</strong><span>Wait for the host to provide a question.</span></div>
-              <div class="rule-item"><strong>2.</strong><span>Answer the question and wait for everyone else to submit their answers.</span></div>
-              <div class="rule-item"><strong>3.</strong><span>Once enough answers are in, the host starts the guessing phase.</span></div>
-              <div class="rule-item"><strong>4.</strong><span>You cannot guess your own answer, and faster correct guesses earn a speed bonus.</span></div>
+              <div class="rule-item"><strong>1.</strong><span>${t('lobby.hostRule1')}</span></div>
+              <div class="rule-item"><strong>2.</strong><span>${t('lobby.hostRule2')}</span></div>
+              <div class="rule-item"><strong>3.</strong><span>${t('lobby.hostRule3')}</span></div>
+              <div class="rule-item"><strong>4.</strong><span>${t('lobby.hostRule4')}</span></div>
             </div>
           </section>
           `
         : `
           <section class="panel">
             <div class="section-head">
-              <h2>Room rules</h2>
+              <h2>${t('lobby.roomRules')}</h2>
             </div>
             <div class="rules-list">
-              <div class="rule-item"><strong>1.</strong><span>Wait for the host to provide a question.</span></div>
-              <div class="rule-item"><strong>2.</strong><span>Answer the question, then wait for everyone else to submit their answers.</span></div>
-              <div class="rule-item"><strong>3.</strong><span>Each person tries to guess who wrote each answer.</span></div>
-              <div class="rule-item"><strong>4.</strong><span>Correct guesses earn 120 points each.</span></div>
+              <div class="rule-item"><strong>1.</strong><span>${t('lobby.playerRule1')}</span></div>
+              <div class="rule-item"><strong>2.</strong><span>${t('lobby.playerRule2')}</span></div>
+              <div class="rule-item"><strong>3.</strong><span>${t('lobby.playerRule3')}</span></div>
+              <div class="rule-item"><strong>4.</strong><span>${t('lobby.playerRule4')}</span></div>
             </div>
           </section>
           `}
 
       <section class="panel">
         <div class="section-head">
-          <h2>Leaderboard</h2>
+          <h2>${t('lobby.leaderboard')}</h2>
         </div>
 
         <div class="leaderboard">
@@ -658,7 +708,7 @@ function renderLobby(): void {
     const value = textarea?.value.trim() ?? ''
 
     if (!value) {
-      window.alert('Type a question before starting the round.')
+      window.alert(t('prompts.typeQuestionFirst'))
       return
     }
 
@@ -677,29 +727,29 @@ function renderHostManaging(): void {
       <section class="panel round-panel">
         <div class="round-header">
           <div>
-            <p class="eyebrow">Round ${state.answerRoundNumber}</p>
+            <p class="eyebrow">${t('hostManaging.round', { number: state.answerRoundNumber })}</p>
             <h1>${state.question}</h1>
           </div>
-          <div class="timer-box">${state.phase === 'answer-collection' ? 'Answer collection' : 'Guessing phase'}</div>
+          <div class="timer-box">${state.phase === 'answer-collection' ? t('hostManaging.answerCollection') : t('hostManaging.guessingPhase')}</div>
         </div>
 
         <div class="answer-reveal">
-          <span>${state.phase === 'answer-collection' ? 'Hidden answer to reveal' : 'Random answer'}</span>
-          <strong>${state.phase === 'answer-collection' ? 'Waiting for reveal...' : state.selectedAnswer}</strong>
+          <span>${state.phase === 'answer-collection' ? t('hostManaging.hiddenAnswer') : t('hostManaging.randomAnswer')}</span>
+          <strong>${state.phase === 'answer-collection' ? t('hostManaging.waitingForReveal') : state.selectedAnswer}</strong>
         </div>
 
         ${state.phase === 'answer-collection'
           ? `
             <div class="turn-box">
-              <p>Answer collection</p>
-              <h2>${state.answers.length} submitted</h2>
+              <p>${t('hostManaging.answerCollection')}</p>
+              <h2>${t('hostManaging.submittedCount', { count: state.answers.length })}</h2>
             </div>
-            <button class="primary-button" type="button" data-role="lock-answers" ${state.answers.length > 0 ? '' : 'disabled'}>Start guessing</button>
+            <button class="primary-button" type="button" data-role="lock-answers" ${state.answers.length > 0 ? '' : 'disabled'}>${t('hostManaging.startGuessing')}</button>
             `
           : `
             <div class="turn-box">
-              <p>Current turn</p>
-              <h2>Choose who wrote it</h2>
+              <p>${t('hostManaging.currentTurn')}</p>
+              <h2>${t('hostManaging.chooseWhoWroteIt')}</h2>
             </div>
 
             <div class="guess-status-list">
@@ -709,21 +759,21 @@ function renderHostManaging(): void {
                   return `
                     <div class="guess-status-row ${guess ? 'done' : 'waiting'}">
                       <span>${player.name}</span>
-                      <strong>${guess ? `Guessed: ${guess.guessedName}` : 'Did not guess yet'}</strong>
+                      <strong>${guess ? t('hostManaging.guessedLabel', { name: guess.guessedName }) : t('hostManaging.notGuessedYet')}</strong>
                     </div>
                   `
                 })
                 .join('')}
             </div>
             <div class="host-actions-row">
-              <button class="primary-button" type="button" data-role="calculate-score">Stop timer and calculate score</button>
+              <button class="primary-button" type="button" data-role="calculate-score">${t('hostManaging.stopTimer')}</button>
             </div>
           `}
       </section>
 
       <section class="panel">
         <div class="section-head">
-          <h2>Submitted answers</h2>
+          <h2>${t('hostManaging.submittedAnswers')}</h2>
         </div>
 
         <div class="result-list">
@@ -738,13 +788,13 @@ function renderHostManaging(): void {
                   `,
                 )
                 .join('')
-            : '<div class="result-row"><span>No answers submitted yet</span></div>'}
+            : `<div class="result-row"><span>${t('hostManaging.noAnswersYet')}</span></div>`}
         </div>
       </section>
 
       <section class="panel">
         <div class="section-head">
-          <h2>Live leaderboard</h2>
+          <h2>${t('hostManaging.liveLeaderboard')}</h2>
         </div>
 
         <div class="leaderboard">
@@ -791,23 +841,23 @@ function renderPlayerAnswering(): void {
     <main class="shell">
       ${renderIdentityBanner()}
       <section class="panel player-answer-panel">
-        <p class="eyebrow">Round ${state.answerRoundNumber}</p>
+        <p class="eyebrow">${t('hostManaging.round', { number: state.answerRoundNumber })}</p>
         <h1>${state.question}</h1>
 
         ${alreadySubmitted
           ? `
             <div class="mini-card">
-              <span>Thank you for submitting your response.</span>
-              <strong>Waiting for the other players to submit their answers...</strong>
+              <span>${t('playerAnswering.thanksSubmitted')}</span>
+              <strong>${t('playerAnswering.waitingForOthers')}</strong>
             </div>
           `
           : `
             <div class="answer-box">
-              <label for="player-answer">Write your answer</label>
-              <textarea id="player-answer" rows="4" placeholder="Type your answer here..."></textarea>
+              <label for="player-answer">${t('playerAnswering.writeAnswer')}</label>
+              <textarea id="player-answer" rows="4" placeholder="${t('playerAnswering.answerPlaceholder')}"></textarea>
             </div>
 
-            <button class="primary-button" type="button" data-role="submit-answer">Submit answer</button>
+            <button class="primary-button" type="button" data-role="submit-answer">${t('playerAnswering.submitAnswer')}</button>
           `}
 
       </section>
@@ -833,7 +883,7 @@ function renderPlayerGuessing(): void {
   const selectedGuessId = state.selectedGuessId ?? state.guesses.find((entry) => entry.guesserId === state.currentPlayerId)?.guessedId ?? null
   const currentPlayer = getCurrentPlayer()
   const currentPlayerRank = getCurrentPlayerRank()
-  const placementLabel = currentPlayerRank === 1 ? '1st place' : currentPlayerRank === 2 ? '2nd place' : currentPlayerRank === 3 ? '3rd place' : null
+  const placementLabel = currentPlayerRank === 1 ? t('playerGuessing.place1') : currentPlayerRank === 2 ? t('playerGuessing.place2') : currentPlayerRank === 3 ? t('playerGuessing.place3') : null
 
   root.innerHTML = `
     <main class="shell">
@@ -841,26 +891,26 @@ function renderPlayerGuessing(): void {
       <section class="panel round-panel">
         <div class="round-header">
           <div>
-            <p class="eyebrow">Round ${state.answerRoundNumber}</p>
+            <p class="eyebrow">${t('hostManaging.round', { number: state.answerRoundNumber })}</p>
             <h1>${state.question}</h1>
           </div>
-          <div class="timer-box">Guessing phase</div>
+          <div class="timer-box">${t('playerGuessing.guessingPhase')}</div>
         </div>
 
         <div class="answer-reveal">
-          <span>Someone answere was this:</span>
+          <span>${t('playerGuessing.answerWasThis')}</span>
           <strong>${state.selectedAnswer}</strong>
         </div>
 
         <div class="turn-box">
-          <p>Current turn</p>
-          <h2>Guess who wrote it</h2>
+          <p>${t('playerGuessing.currentTurn')}</p>
+          <h2>${t('playerGuessing.guessWhoWroteIt')}</h2>
         </div>
 
         <div class="guess-score-status">
           <div>
-            <span>Your score</span>
-            <strong>${currentPlayer ? formatScore(currentPlayer.score) : 'Score loading...'}</strong>
+            <span>${t('playerGuessing.yourScore')}</span>
+            <strong>${currentPlayer ? formatScore(currentPlayer.score) : t('playerGuessing.scoreLoading')}</strong>
           </div>
           ${placementLabel ? `<span class="score-placement rank-${currentPlayerRank}">${placementLabel}</span>` : ''}
         </div>
@@ -871,7 +921,7 @@ function renderPlayerGuessing(): void {
               (player) => `
                 <button type="button" class="guess-card ${selectedGuessId === player.id ? 'selected' : ''}" data-guess-id="${player.id}">
                   <span>${player.name}</span>
-                  <small>Guess this person</small>
+                  <small>${t('playerGuessing.guessThisPerson')}</small>
                 </button>
               `,
             )
@@ -879,8 +929,8 @@ function renderPlayerGuessing(): void {
         </div>
 
         <div class="mini-card">
-          <span>${selectedGuessId ? 'Your pick' : 'Waiting for your pick'}</span>
-          <strong>${selectedGuessId ? guessOptions.find((player) => player.id === selectedGuessId)?.name ?? 'Selected' : 'No selection yet'}</strong>
+          <span>${selectedGuessId ? t('playerGuessing.yourPick') : t('playerGuessing.waitingForPick')}</span>
+          <strong>${selectedGuessId ? guessOptions.find((player) => player.id === selectedGuessId)?.name ?? t('playerGuessing.selected') : t('playerGuessing.noSelectionYet')}</strong>
         </div>
       </section>
     </main>
@@ -902,8 +952,8 @@ function renderRoundEnd(): void {
     <main class="shell">
       ${renderIdentityBanner()}
       <section class="panel summary-panel">
-        <p class="eyebrow">Round complete</p>
-        <h1>Round standings</h1>
+        <p class="eyebrow">${t('roundEnd.complete')}</p>
+        <h1>${t('roundEnd.standings')}</h1>
 
         <div class="leaderboard">
           ${sortedPlayers
@@ -921,17 +971,17 @@ function renderRoundEnd(): void {
 
       <section class="panel">
         <div class="section-head">
-          <h2>Round results</h2>
+          <h2>${t('roundEnd.results')}</h2>
         </div>
 
         <div class="mini-card">
-          <span>The answer was</span>
+          <span>${t('roundEnd.answerWas')}</span>
           <strong>"${state.selectedAnswer}"</strong>
         </div>
 
         <div class="mini-card">
-          <span>Written by</span>
-          <strong>${state.players.find((player) => player.id === state.answerAuthorId)?.name ?? 'Unknown'}</strong>
+          <span>${t('roundEnd.writtenBy')}</span>
+          <strong>${state.players.find((player) => player.id === state.answerAuthorId)?.name ?? t('roundEnd.unknown')}</strong>
         </div>
 
         <div class="result-list">
@@ -939,8 +989,8 @@ function renderRoundEnd(): void {
             .map(
               (result) => `
                 <div class="result-row ${result.correct ? 'success' : 'fail'}">
-                  <span>${result.guesserName} guessed ${result.guessedName}</span>
-                  <strong>${result.correct ? `+${formatScore(result.points)}` : 'No points'}</strong>
+                  <span>${t('roundEnd.guessedLine', { guesser: result.guesserName, guessed: result.guessedName })}</span>
+                  <strong>${result.correct ? t('roundEnd.pointsEarned', { points: result.points }) : t('roundEnd.noPoints')}</strong>
                 </div>
               `,
             )
@@ -952,10 +1002,10 @@ function renderRoundEnd(): void {
           if (!myResult) {
             return ''
           }
-          return `<div class="mini-card"><span>${myResult.correct ? '🎉 You earned more points!' : '😅 You missed it'}</span></div>`
+          return `<div class="mini-card"><span>${myResult.correct ? t('roundEnd.earnedMore') : t('roundEnd.missedIt')}</span></div>`
         })()}
 
-        ${state.role === 'host' ? `<button class="primary-button next-round" type="button" data-role="next-round">${state.answerRoundNumber >= state.answers.length ? 'Go to final score board' : 'Next round'}</button>` : ''}
+        ${state.role === 'host' ? `<button class="primary-button next-round" type="button" data-role="next-round">${state.answerRoundNumber >= state.answers.length ? t('roundEnd.goToFinalBoard') : t('roundEnd.nextRound')}</button>` : ''}
       </section>
     </main>
   `
@@ -973,8 +1023,8 @@ function renderGameEnd(): void {
     <main class="shell">
       ${renderIdentityBanner()}
       <section class="panel summary-panel">
-        <p class="eyebrow">Game complete</p>
-        <h1>🎉 Game finished!</h1>
+        <p class="eyebrow">${t('gameEnd.complete')}</p>
+        <h1>${t('gameEnd.finished')}</h1>
 
         <div class="leaderboard">
           ${sortedPlayers
@@ -992,7 +1042,7 @@ function renderGameEnd(): void {
 
       <section class="panel">
         <div class="section-head">
-          <h2>Top performers</h2>
+          <h2>${t('gameEnd.topPerformers')}</h2>
         </div>
 
         <div class="result-list">
@@ -1000,7 +1050,7 @@ function renderGameEnd(): void {
             .map(
               (player, index) => `
                 <div class="result-row success">
-                  <span>${['🥇 Gold', '🥈 Silver', '🥉 Bronze'][index]} — ${player.name}</span>
+                  <span>${[t('gameEnd.gold'), t('gameEnd.silver'), t('gameEnd.bronze')][index]} — ${player.name}</span>
                   <strong>${formatScore(player.score)}</strong>
                 </div>
               `,
@@ -1009,7 +1059,7 @@ function renderGameEnd(): void {
         </div>
       </section>
 
-      ${state.role === 'host' ? '<button class="primary-button next-round" type="button" data-role="new-game">Start a new game</button>' : ''}
+      ${state.role === 'host' ? `<button class="primary-button next-round" type="button" data-role="new-game">${t('gameEnd.newGame')}</button>` : ''}
     </main>
   `
 
@@ -1027,6 +1077,11 @@ function renderApp(): void {
 
   if (state.screen === 'membership') {
     renderMembership()
+    return
+  }
+
+  if (state.screen === 'host-setup') {
+    renderHostSetup()
     return
   }
 
@@ -1108,16 +1163,16 @@ socket.addEventListener('message', (event) => {
         state.currentPlayerId = ''
         renderApp()
       }
-      window.alert(payload.message || 'Something went wrong.')
+      window.alert(payload.code ? t(`errors.${payload.code}`) : (payload.message || t('errors.default')))
     }
   } catch {
-    window.alert('The room connection sent invalid data.')
+    window.alert(t('prompts.invalidRoomData'))
   }
 })
 
 socket.addEventListener('close', () => {
   if (!isPageUnloading) {
-    window.alert('The game server connection was closed. Refresh the page to reconnect.')
+    window.alert(t('prompts.connectionClosed'))
   }
 })
 
@@ -1144,9 +1199,9 @@ async function consumeEmailVerificationLink(): Promise<void> {
       body: JSON.stringify({ token }),
     })
     const payload = await response.json()
-    window.alert(response.ok ? 'Email verified! You can now log in to host a room.' : (payload.error || 'This verification link is invalid or expired.'))
+    window.alert(response.ok ? t('prompts.emailVerified') : (payload.error || t('prompts.verifyLinkInvalid')))
   } catch {
-    window.alert('Could not verify your email right now. Please try the link again later.')
+    window.alert(t('prompts.verifyLater'))
   }
 }
 

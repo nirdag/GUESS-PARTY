@@ -76,7 +76,7 @@ button {
 }
 
 .identity-role {
-  margin-left: auto;
+  margin-inline-start: auto;
   padding: 3px 8px;
   border-radius: 999px;
   background: rgba(255, 184, 108, 0.14);
@@ -164,7 +164,7 @@ button {
   min-height: 170px;
   border-radius: 18px;
   color: white;
-  text-align: left;
+  text-align: start;
   padding: 22px;
   border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.02);
@@ -652,7 +652,7 @@ h1 {
   }
 
   .identity-role {
-    margin-left: 0;
+    margin-inline-start: 0;
   }
 
   .guess-score-status {
