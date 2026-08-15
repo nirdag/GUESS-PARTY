@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
+import crypto from 'node:crypto';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +44,7 @@ const questionBank = [
 ];
 
 const rooms = new Map();
+const reconnectGracePeriodMs = 30 * 60 * 1000;
 
 function createRoomCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -99,6 +101,94 @@ function findPlayerById(room, playerId) {
   return room.players.find((player) => player.id === playerId);
 }
 
+function createReconnectToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+function sendRoomSession(socket, room, role, playerId, playerName, reconnectToken) {
+  socket.send(JSON.stringify({
+    type: 'room-session',
+    session: {
+      roomCode: room.code,
+      role,
+      playerId,
+      playerName,
+      reconnectToken,
+    },
+  }));
+}
+
+function attachSocketToRoom(room, socket, playerId) {
+  room.clients.forEach((client) => {
+    if (client !== socket && client.playerId === playerId) {
+      room.clients.delete(client);
+      client.close();
+    }
+  });
+
+  socket.roomCode = room.code;
+  socket.playerId = playerId;
+  room.clients.add(socket);
+}
+
+function reconnectRoom(room, socket, { role, reconnectToken }) {
+  if (role === 'host') {
+    if (!socket.user || room.hostAccountId !== socket.user.id || room.hostReconnectToken !== reconnectToken) {
+      return null;
+    }
+
+    room.hostDisconnectedAt = null;
+    attachSocketToRoom(room, socket, room.hostId);
+    return {
+      role: 'host',
+      playerId: room.hostId,
+      playerName: room.hostName,
+      reconnectToken: room.hostReconnectToken,
+    };
+  }
+
+  if (role !== 'player') {
+    return null;
+  }
+
+  const player = room.players.find((entry) => entry.reconnectToken === reconnectToken);
+  if (!player) {
+    return null;
+  }
+
+  player.disconnectedAt = null;
+  attachSocketToRoom(room, socket, player.id);
+  return {
+    role: 'player',
+    playerId: player.id,
+    playerName: player.name,
+    reconnectToken: player.reconnectToken,
+  };
+}
+
+function expireDisconnectedMemberships(now = Date.now()) {
+  rooms.forEach((room) => {
+    const hostExpired = room.hostDisconnectedAt && now - room.hostDisconnectedAt >= reconnectGracePeriodMs;
+    if (hostExpired) {
+      room.hostId = null;
+      room.hostReconnectToken = null;
+      room.hostDisconnectedAt = null;
+    }
+
+    const previousPlayerCount = room.players.length;
+    room.players = room.players.filter((player) => !player.disconnectedAt || now - player.disconnectedAt < reconnectGracePeriodMs);
+
+    if (!room.hostId && room.players.length === 0) {
+      rooms.delete(room.code);
+      return;
+    }
+
+    if (hostExpired || room.players.length !== previousPlayerCount) {
+      broadcastRoom(room);
+    }
+  });
+}
+
 function nextTurn(room) {
   if (room.phase !== 'answer') {
     return;
@@ -136,6 +226,8 @@ function createRoom({ hostName, hostAccountId = null }) {
     hostId: `${code}-host-${Date.now()}`,
     hostAccountId,
     hostName: (hostName || 'Host').trim() || 'Host',
+    hostReconnectToken: createReconnectToken(),
+    hostDisconnectedAt: null,
     playerTurnIndex: 0,
   };
 
@@ -161,6 +253,8 @@ function addPlayerToRoom(room, name) {
     id: `${room.code}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
     name: trimmed,
     score: 0,
+    reconnectToken: createReconnectToken(),
+    disconnectedAt: null,
   };
 
   room.players.push(player);
@@ -479,15 +573,32 @@ wss.on('connection', (socket, request) => {
       const room = message.roomCode ? findRoomByCode(message.roomCode) : null;
 
       switch (message.type) {
+        case 'reconnect-room': {
+          if (!room) {
+            socket.send(JSON.stringify({ type: 'error', code: 'ROOM_SESSION_EXPIRED', message: 'This room is no longer available.' }));
+            return;
+          }
+
+          const membership = reconnectRoom(room, socket, message);
+          if (!membership) {
+            socket.send(JSON.stringify({ type: 'error', code: 'ROOM_SESSION_INVALID', message: 'This room session cannot be restored.' }));
+            return;
+          }
+
+          sendRoomSession(socket, room, membership.role, membership.playerId, membership.playerName, membership.reconnectToken);
+          socket.send(JSON.stringify({ type: 'room-state', state: makeRoomState(room) }));
+          broadcastRoom(room);
+          break;
+        }
+
         case 'create-room': {
           if (!socket.user) {
             socket.send(JSON.stringify({ type: 'error', code: 'AUTH_REQUIRED', message: 'Log in to create a room.' }));
             return;
           }
           const roomData = createRoom({ hostName: message.name || 'Host', hostAccountId: socket.user.id });
-          socket.roomCode = roomData.code;
-          socket.playerId = roomData.hostId;
-          roomData.clients.add(socket);
+          attachSocketToRoom(roomData, socket, roomData.hostId);
+          sendRoomSession(socket, roomData, 'host', roomData.hostId, roomData.hostName, roomData.hostReconnectToken);
           socket.send(JSON.stringify({ type: 'room-state', state: makeRoomState(roomData) }));
           break;
         }
@@ -505,9 +616,8 @@ wss.on('connection', (socket, request) => {
             return;
           }
 
-          socket.roomCode = targetRoom.code;
-          socket.playerId = player.id;
-          targetRoom.clients.add(socket);
+          attachSocketToRoom(targetRoom, socket, player.id);
+          sendRoomSession(socket, targetRoom, 'player', player.id, player.name, player.reconnectToken);
           broadcastRoom(targetRoom);
           break;
         }
@@ -598,22 +708,26 @@ wss.on('connection', (socket, request) => {
 
     room.clients.delete(socket);
 
-    if (room.players.length > 0 && socket.playerId) {
-      room.players = room.players.filter((player) => player.id !== socket.playerId);
+    const replacementConnectionExists = [...room.clients].some((client) => client.playerId === socket.playerId);
+    if (replacementConnectionExists) {
+      return;
     }
 
     if (room.hostId === socket.playerId) {
-      room.hostId = null;
-    }
-
-    if (room.players.length === 0 && !room.hostId) {
-      rooms.delete(room.code);
-      return;
+      room.hostDisconnectedAt = Date.now();
+    } else {
+      const player = findPlayerById(room, socket.playerId);
+      if (player) {
+        player.disconnectedAt = Date.now();
+      }
     }
 
     broadcastRoom(room);
   });
 });
+
+const membershipCleanup = setInterval(expireDisconnectedMemberships, 60 * 1000);
+membershipCleanup.unref();
 
 // Only start server if not running in test environment
 if (process.env.NODE_ENV !== 'test' && !globalThis.__VITEST__) {
@@ -634,6 +748,10 @@ export {
   submitAnswer,
   createRoom,
   createRoomCode,
+  findRoomByCode,
+  reconnectRoom,
+  expireDisconnectedMemberships,
+  reconnectGracePeriodMs,
 };
 
 // Graceful shutdown for testing

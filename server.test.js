@@ -9,6 +9,10 @@ import {
   advanceGuessRound,
   submitAnswer,
   createRoom,
+  findRoomByCode,
+  reconnectRoom,
+  expireDisconnectedMemberships,
+  reconnectGracePeriodMs,
 } from './server.js';
 
 // Mock room/player creation for testing
@@ -467,5 +471,70 @@ describe('MEDIUM: Room Management', () => {
     const found = findPlayerById(room, 'nonexistent');
 
     expect(found).toBeUndefined();
+  });
+});
+
+describe('CRITICAL: Room Reconnection', () => {
+  function createTestSocket(user = null) {
+    return {
+      user,
+      sent: [],
+      close() {},
+      send(message) {
+        this.sent.push(message);
+      },
+    };
+  }
+
+  it('restores a disconnected player with the same identity and score', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account' });
+    const player = addPlayerToRoom(room, 'Alice');
+    player.score = 120;
+    player.disconnectedAt = Date.now();
+    const socket = createTestSocket();
+
+    const membership = reconnectRoom(room, socket, { role: 'player', reconnectToken: player.reconnectToken });
+
+    expect(membership).toMatchObject({ role: 'player', playerId: player.id, playerName: 'Alice' });
+    expect(socket.playerId).toBe(player.id);
+    expect(player.disconnectedAt).toBeNull();
+    expect(room.players).toHaveLength(1);
+    expect(room.players[0].score).toBe(120);
+  });
+
+  it('restores a host only when their authenticated account and token match', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account' });
+    room.hostDisconnectedAt = Date.now();
+    const socket = createTestSocket({ id: 'host-account' });
+
+    const membership = reconnectRoom(room, socket, { role: 'host', reconnectToken: room.hostReconnectToken });
+
+    expect(membership).toMatchObject({ role: 'host', playerId: room.hostId });
+    expect(room.hostDisconnectedAt).toBeNull();
+    expect(socket.playerId).toBe(room.hostId);
+  });
+
+  it('rejects a player reconnect attempt with an invalid token', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account' });
+    const player = addPlayerToRoom(room, 'Alice');
+    const socket = createTestSocket();
+
+    const membership = reconnectRoom(room, socket, { role: 'player', reconnectToken: 'invalid-token' });
+
+    expect(membership).toBeNull();
+    expect(socket.playerId).toBeUndefined();
+    expect(player.disconnectedAt).toBeNull();
+  });
+
+  it('expires disconnected memberships after the reconnect grace period', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account' });
+    const player = addPlayerToRoom(room, 'Alice');
+    const expiredAt = Date.now() - reconnectGracePeriodMs;
+    room.hostDisconnectedAt = expiredAt;
+    player.disconnectedAt = expiredAt;
+
+    expireDisconnectedMemberships(Date.now());
+
+    expect(findRoomByCode(room.code)).toBeUndefined();
   });
 });

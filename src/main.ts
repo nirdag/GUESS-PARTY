@@ -9,6 +9,13 @@ type Account = {
   emailVerified: boolean
 }
 
+type RoomSession = {
+  roomCode: string
+  role: Role
+  playerId: string
+  playerName: string
+  reconnectToken: string
+}
 
 type Player = {
   id: string
@@ -55,14 +62,57 @@ if (!app) {
 }
 
 const root = app
+const roomSessionStorageKey = 'guess-party-room-session'
+
+function readStoredRoomSession(): RoomSession | null {
+  try {
+    const stored = window.localStorage.getItem(roomSessionStorageKey)
+    if (!stored) {
+      return null
+    }
+
+    const session = JSON.parse(stored) as Partial<RoomSession>
+    if (
+      (session.role !== 'host' && session.role !== 'player')
+      || !session.roomCode
+      || !session.playerId
+      || !session.playerName
+      || !session.reconnectToken
+    ) {
+      return null
+    }
+
+    return session as RoomSession
+  } catch {
+    return null
+  }
+}
+
+function saveRoomSession(session: RoomSession): void {
+  try {
+    window.localStorage.setItem(roomSessionStorageKey, JSON.stringify(session))
+  } catch {
+    // The game can continue for this page even if browser storage is unavailable.
+  }
+}
+
+function clearStoredRoomSession(): void {
+  try {
+    window.localStorage.removeItem(roomSessionStorageKey)
+  } catch {
+    // Nothing else is required when browser storage is unavailable.
+  }
+}
+
+const storedRoomSession = readStoredRoomSession()
 
 const state = {
   screen: 'welcome' as Screen,
   account: null as Account | null,
-  role: 'host' as Role,
-  roomCode: '',
-  playerName: '',
-  currentPlayerId: '',
+  role: storedRoomSession?.role ?? 'host' as Role,
+  roomCode: storedRoomSession?.roomCode ?? '',
+  playerName: storedRoomSession?.playerName ?? '',
+  currentPlayerId: storedRoomSession?.playerId ?? '',
   players: [] as Player[],
   answerRoundNumber: 0,
   question: '',
@@ -80,11 +130,13 @@ const state = {
 }
 
 let queuedAction: (() => void) | null = null
-
-const socket = new WebSocket(buildSocketUrl())
+let shouldRestoreRoomSession = Boolean(storedRoomSession)
+let isPageUnloading = false
 
 // Vite dev server (5173) proxies nothing, so dev must reach the API/WS server on its own port.
 const DEV_API_PORT = '8080'
+
+const socket = new WebSocket(buildSocketUrl())
 
 function isViteDevServer(): boolean {
   return window.location.port === '5173'
@@ -118,6 +170,25 @@ function formatPlayerInitials(name: string): string {
 
 function getCurrentPlayer(): Player | undefined {
   return state.players.find((player) => player.id === state.currentPlayerId)
+}
+
+function getCurrentPlayerRank(): number | null {
+  const sortedPlayers = [...state.players].sort((first, second) => second.score - first.score)
+  let rank = 0
+  let previousScore: number | null = null
+
+  for (const [index, player] of sortedPlayers.entries()) {
+    if (player.score !== previousScore) {
+      rank = index + 1
+      previousScore = player.score
+    }
+
+    if (player.id === state.currentPlayerId) {
+      return rank
+    }
+  }
+
+  return null
 }
 
 function sendSocketMessage(type: string, payload: Record<string, unknown> = {}): void {
@@ -192,6 +263,8 @@ function createRoomSession(): void {
   const nextName = rawName.trim() || 'Host'
   state.playerName = nextName
   state.role = 'host'
+  shouldRestoreRoomSession = false
+  clearStoredRoomSession()
   state.screen = 'lobby'
 
   if (socket.readyState === WebSocket.OPEN) {
@@ -238,6 +311,8 @@ function joinRoomSession(): void {
   state.playerName = name
   state.role = 'player'
   state.roomCode = roomCode
+  shouldRestoreRoomSession = false
+  clearStoredRoomSession()
 
   if (socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ type: 'join-room', name, roomCode }))
@@ -320,6 +395,19 @@ function advanceAnswer(): void {
   }
 
   sendSocketMessage('advance-answer')
+}
+
+function renderIdentityBanner(): string {
+  const displayName = state.playerName || 'Guest'
+  const roleLabel = state.role === 'host' ? 'Host' : 'Player'
+
+  return `
+    <div class="identity-banner">
+      <span>Playing as</span>
+      <strong>${displayName}</strong>
+      <span class="identity-role">${roleLabel}</span>
+    </div>
+  `
 }
 
 function renderWelcome(): void {
@@ -449,6 +537,7 @@ function renderLobby(): void {
 
   root.innerHTML = `
     <main class="shell">
+      ${renderIdentityBanner()}
       <section class="panel hero-panel">
         <div class="hero-copy">
           <p class="eyebrow">${state.role === 'host' ? 'Host view' : 'Player view'}</p>
@@ -576,6 +665,7 @@ function renderHostManaging(): void {
 
   root.innerHTML = `
     <main class="shell">
+      ${renderIdentityBanner()}
       <section class="panel round-panel">
         <div class="round-header">
           <div>
@@ -691,12 +781,18 @@ function renderPlayerAnswering(): void {
 
   root.innerHTML = `
     <main class="shell">
+      ${renderIdentityBanner()}
       <section class="panel player-answer-panel">
         <p class="eyebrow">Round ${state.answerRoundNumber}</p>
         <h1>${state.question}</h1>
 
         ${alreadySubmitted
-          ? '<div class="mini-card"><span>Thank you for submitting your response</span></div>'
+          ? `
+            <div class="mini-card">
+              <span>Thank you for submitting your response.</span>
+              <strong>Waiting for the other players to submit their answers...</strong>
+            </div>
+          `
           : `
             <div class="answer-box">
               <label for="player-answer">Write your answer</label>
@@ -706,10 +802,6 @@ function renderPlayerAnswering(): void {
             <button class="primary-button" type="button" data-role="submit-answer">Submit answer</button>
           `}
 
-        <div class="mini-card">
-          <span>Playing as</span>
-          <strong>${getCurrentPlayer()?.name ?? 'Guest'}</strong>
-        </div>
       </section>
     </main>
   `
@@ -731,9 +823,13 @@ function renderPlayerAnswering(): void {
 function renderPlayerGuessing(): void {
   const guessOptions = state.players.filter((player) => player.id !== state.currentPlayerId)
   const selectedGuessId = state.selectedGuessId ?? state.guesses.find((entry) => entry.guesserId === state.currentPlayerId)?.guessedId ?? null
+  const currentPlayer = getCurrentPlayer()
+  const currentPlayerRank = getCurrentPlayerRank()
+  const placementLabel = currentPlayerRank === 1 ? '1st place' : currentPlayerRank === 2 ? '2nd place' : currentPlayerRank === 3 ? '3rd place' : null
 
   root.innerHTML = `
     <main class="shell">
+      ${renderIdentityBanner()}
       <section class="panel round-panel">
         <div class="round-header">
           <div>
@@ -751,6 +847,14 @@ function renderPlayerGuessing(): void {
         <div class="turn-box">
           <p>Current turn</p>
           <h2>Guess who wrote it</h2>
+        </div>
+
+        <div class="guess-score-status">
+          <div>
+            <span>Your score</span>
+            <strong>${currentPlayer ? formatScore(currentPlayer.score) : 'Score loading...'}</strong>
+          </div>
+          ${placementLabel ? `<span class="score-placement rank-${currentPlayerRank}">${placementLabel}</span>` : ''}
         </div>
 
         <div class="guess-grid">
@@ -788,6 +892,7 @@ function renderRoundEnd(): void {
 
   root.innerHTML = `
     <main class="shell">
+      ${renderIdentityBanner()}
       <section class="panel summary-panel">
         <p class="eyebrow">Round complete</p>
         <h1>Round standings</h1>
@@ -858,6 +963,7 @@ function renderGameEnd(): void {
 
   root.innerHTML = `
     <main class="shell">
+      ${renderIdentityBanner()}
       <section class="panel summary-panel">
         <p class="eyebrow">Game complete</p>
         <h1>🎉 Game finished!</h1>
@@ -948,6 +1054,16 @@ function renderApp(): void {
 }
 
 socket.addEventListener('open', () => {
+  if (shouldRestoreRoomSession && storedRoomSession) {
+    socket.send(JSON.stringify({
+      type: 'reconnect-room',
+      roomCode: storedRoomSession.roomCode,
+      role: storedRoomSession.role,
+      reconnectToken: storedRoomSession.reconnectToken,
+    }))
+    shouldRestoreRoomSession = false
+  }
+
   if (queuedAction) {
     const nextAction = queuedAction
     queuedAction = null
@@ -959,12 +1075,31 @@ socket.addEventListener('message', (event) => {
   try {
     const payload = JSON.parse(event.data)
 
+    if (payload.type === 'room-session') {
+      const session = payload.session as RoomSession
+      saveRoomSession(session)
+      state.roomCode = session.roomCode
+      state.role = session.role
+      state.currentPlayerId = session.playerId
+      state.playerName = session.playerName
+      return
+    }
+
     if (payload.type === 'room-state') {
       applyRoomState(payload.state)
       return
     }
 
     if (payload.type === 'error') {
+      if (payload.code === 'ROOM_SESSION_EXPIRED' || payload.code === 'ROOM_SESSION_INVALID') {
+        clearStoredRoomSession()
+        shouldRestoreRoomSession = false
+        state.screen = 'welcome'
+        state.roomCode = ''
+        state.playerName = ''
+        state.currentPlayerId = ''
+        renderApp()
+      }
       window.alert(payload.message || 'Something went wrong.')
     }
   } catch {
@@ -973,7 +1108,13 @@ socket.addEventListener('message', (event) => {
 })
 
 socket.addEventListener('close', () => {
-  window.alert('The game server connection was closed. Refresh the page to reconnect.')
+  if (!isPageUnloading) {
+    window.alert('The game server connection was closed. Refresh the page to reconnect.')
+  }
+})
+
+window.addEventListener('pagehide', () => {
+  isPageUnloading = true
 })
 
 async function consumeEmailVerificationLink(): Promise<void> {
