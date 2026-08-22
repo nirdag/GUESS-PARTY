@@ -1,3 +1,4 @@
+import appInsights from 'applicationinsights';
 import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
@@ -8,6 +9,12 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { createAuthService } from './auth.js';
 import { sendVerificationEmail } from './emailService.js';
+import { logger } from './logger.js';
+
+if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
+  appInsights.setup().setSendLiveMetrics(true).start();
+  appInsights.defaultClient.context.tags[appInsights.defaultClient.context.keys.cloudRole] = 'guess-party';
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDirectory = path.join(__dirname, 'dist');
@@ -26,13 +33,22 @@ const authService = createAuthService({
     sendVerificationEmail({ email, link })
       .then((sent) => {
         if (!sent && !isProduction) {
-          console.log(`Verification link for ${email}: ${link}`);
+          logger.info('verification-link-dev-fallback', { link });
         }
       })
       .catch((error) => {
-        console.error('Failed to send verification email:', error);
+        logger.error('verification-email-send-failed', { error });
       });
   },
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error('uncaught-exception', { error });
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  logger.error('unhandled-rejection', { error: reason instanceof Error ? reason : new Error(String(reason)) });
 });
 const questionBank = [
   'What is the best way to spend a perfect family night?',
@@ -46,9 +62,21 @@ const questionBank = [
 const rooms = new Map();
 const reconnectGracePeriodMs = 30 * 60 * 1000;
 const supportedLanguages = new Set(['en', 'he']);
+const GUESS_TIMEOUT_SECONDS = 20;
+// Fixed allow-list: never trust arbitrary client-supplied avatar strings.
+const AVATAR_OPTIONS = [
+  '🦊', '🐸', '🐧', '🐼', '🐨', '🦁', '🐵', '🐯',
+  '🐮', '🐷', '🐙', '🦄', '🐝', '🦋', '🐢', '🐳',
+  '🦖', '🌵', '🍕', '🎧', '🚀', '⭐', '🎲', '🎨',
+];
+const defaultAvatar = AVATAR_OPTIONS[0];
 
 function normalizeLanguage(language) {
   return supportedLanguages.has(language) ? language : 'en';
+}
+
+function normalizeAvatar(avatar) {
+  return AVATAR_OPTIONS.includes(avatar) ? avatar : defaultAvatar;
 }
 
 function createRoomCode() {
@@ -67,6 +95,7 @@ function safePlayer(player) {
     id: player.id,
     name: player.name,
     score: player.score,
+    avatar: player.avatar,
   };
 }
 
@@ -85,7 +114,10 @@ function makeRoomState(room) {
     guesses: room.guesses,
     roundResults: room.roundResults,
     hostId: room.hostId,
+    hostAvatar: room.hostAvatar,
     language: room.language,
+    guessTimeoutEnabled: room.guessTimeoutEnabled,
+    guessDeadlineMs: room.guessDeadlineMs,
   };
 }
 
@@ -211,7 +243,7 @@ function nextTurn(room) {
   }
 }
 
-function createRoom({ hostName, hostAccountId = null, language = 'en' }) {
+function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvatar, enforceGuessTimeout = false }) {
   const code = createRoomCode();
   const room = {
     code,
@@ -232,17 +264,42 @@ function createRoom({ hostName, hostAccountId = null, language = 'en' }) {
     hostId: `${code}-host-${Date.now()}`,
     hostAccountId,
     hostName: (hostName || 'Host').trim() || 'Host',
+    hostAvatar: normalizeAvatar(hostAvatar),
     hostReconnectToken: createReconnectToken(),
     hostDisconnectedAt: null,
     playerTurnIndex: 0,
     language: normalizeLanguage(language),
+    guessTimeoutEnabled: Boolean(enforceGuessTimeout),
+    guessDeadlineMs: null,
+    guessTimeoutHandle: null,
   };
 
   rooms.set(code, room);
   return room;
 }
 
-function addPlayerToRoom(room, name) {
+function clearGuessTimeout(room) {
+  if (room.guessTimeoutHandle) {
+    clearTimeout(room.guessTimeoutHandle);
+    room.guessTimeoutHandle = null;
+  }
+  room.guessDeadlineMs = null;
+}
+
+function armGuessTimeout(room) {
+  clearGuessTimeout(room);
+  if (!room.guessTimeoutEnabled) {
+    return;
+  }
+
+  room.guessDeadlineMs = Date.now() + GUESS_TIMEOUT_SECONDS * 1000;
+  room.guessTimeoutHandle = setTimeout(() => {
+    calculateRoundScores(room);
+  }, GUESS_TIMEOUT_SECONDS * 1000);
+  room.guessTimeoutHandle.unref?.();
+}
+
+function addPlayerToRoom(room, name, avatar) {
   const trimmed = (name || '').trim();
   if (!trimmed) {
     return null;
@@ -260,12 +317,70 @@ function addPlayerToRoom(room, name) {
     id: `${room.code}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
     name: trimmed,
     score: 0,
+    avatar: normalizeAvatar(avatar),
     reconnectToken: createReconnectToken(),
     disconnectedAt: null,
   };
 
   room.players.push(player);
   return player;
+}
+
+function leaveRoom(room, playerId) {
+  const playerIndex = room.players.findIndex((player) => player.id === playerId);
+  if (playerIndex === -1) {
+    return null;
+  }
+
+  const [removedPlayer] = room.players.splice(playerIndex, 1);
+
+  [...room.clients].forEach((client) => {
+    if (client.playerId === playerId) {
+      room.clients.delete(client);
+      client.roomCode = null;
+      client.playerId = null;
+    }
+  });
+
+  if (!room.hostId && room.players.length === 0) {
+    rooms.delete(room.code);
+  }
+
+  return removedPlayer;
+}
+
+function closeRoom(room) {
+  if (!room || rooms.get(room.code) !== room) {
+    return false;
+  }
+
+  clearGuessTimeout(room);
+  rooms.delete(room.code);
+  room.hostReconnectToken = null;
+  room.hostDisconnectedAt = null;
+  room.players.forEach((player) => {
+    player.reconnectToken = null;
+    player.disconnectedAt = null;
+  });
+
+  [...room.clients].forEach((client) => {
+    client.roomCode = null;
+    client.playerId = null;
+
+    if (client.readyState !== 1) {
+      client.close();
+      return;
+    }
+
+    // Wait for the send to actually flush before closing, otherwise close() can race ahead of it
+    // (e.g. under permessage-deflate/backpressure) and the client never sees the room-closed message.
+    client.send(JSON.stringify({ type: 'room-closed' }), () => {
+      client.close();
+    });
+  });
+
+  room.clients.clear();
+  return true;
 }
 
 function startRound(room, customQuestion = '') {
@@ -297,6 +412,25 @@ function startRound(room, customQuestion = '') {
   broadcastRoom(room);
 }
 
+function startNewGame(room) {
+  room.phase = 'lobby';
+  room.answerRoundNumber = 0;
+  room.question = '';
+  room.answerAuthorId = null;
+  room.selectedAnswer = '';
+  room.activeGuesserIndex = 0;
+  room.playerTurnIndex = 0;
+  room.timeLeft = 0;
+  room.answers = [];
+  room.guesses = [];
+  room.answerQueue = [];
+  room.currentAnswer = null;
+  room.roundResults = [];
+  // player scores are intentionally left untouched so totals keep aggregating across games
+
+  broadcastRoom(room);
+}
+
 function prepareCurrentAnswer(room) {
   if (room.answerQueue.length === 0) {
     room.currentAnswer = null;
@@ -304,6 +438,7 @@ function prepareCurrentAnswer(room) {
     room.timeLeft = 0;
     room.answerAuthorId = null;
     room.selectedAnswer = '';
+    clearGuessTimeout(room);
     broadcastRoom(room);
     return;
   }
@@ -319,6 +454,7 @@ function prepareCurrentAnswer(room) {
   room.activeGuesserIndex = 0;
   room.answerRoundNumber = (room.answers.length || room.answerQueue.length + 1) - room.answerQueue.length;
   room.timeLeft = 0;
+  armGuessTimeout(room);
   broadcastRoom(room);
 }
 
@@ -348,6 +484,8 @@ function moveToNextAnswer(room) {
 }
 
 function calculateRoundScores(room) {
+  clearGuessTimeout(room);
+
   if (room.phase !== 'guessing' || !room.currentAnswer) {
     return;
   }
@@ -472,6 +610,25 @@ function evaluateGuess(room, guesserId, guessTargetId) {
 app.use(cors({ origin: appOrigin, credentials: true }));
 app.use(express.json());
 
+app.use((req, res, next) => {
+  // Skip static asset GETs (dist/) to keep signal-to-noise high; API/health/rooms paths are what matter operationally.
+  if (req.path === '/' || (req.method === 'GET' && !req.path.startsWith('/auth/') && req.path !== '/health' && req.path !== '/rooms')) {
+    next();
+    return;
+  }
+
+  const startedAt = Date.now();
+  res.on('finish', () => {
+    logger.info('http-request', {
+      method: req.method,
+      path: req.path,
+      statusCode: res.statusCode,
+      durationMs: Date.now() - startedAt,
+    });
+  });
+  next();
+});
+
 function parseCookies(header = '') {
   return Object.fromEntries(
     header.split(';').map((part) => part.trim().split('=').map(decodeURIComponent)).filter(([key, value]) => key && value),
@@ -509,18 +666,22 @@ const authRateLimiter = rateLimit({
 app.post('/auth/signup', authRateLimiter, (req, res) => {
   const result = authService.signUp(req.body?.email, req.body?.password);
   if (result.error) {
+    logger.warn('auth-signup-failed', { code: result.code });
     res.status(400).json({ error: result.error });
     return;
   }
+  logger.event('auth-signup-succeeded', { userId: result.user?.id });
   res.status(201).json({ user: result.user, emailVerificationRequired: true });
 });
 
 app.post('/auth/login', authRateLimiter, (req, res) => {
   const result = authService.login(req.body?.email, req.body?.password);
   if (result.error) {
+    logger.warn('auth-login-failed', { code: result.code });
     res.status(result.code === 'EMAIL_NOT_VERIFIED' ? 403 : 401).json({ error: result.error, code: result.code });
     return;
   }
+  logger.event('auth-login-succeeded', { userId: result.user?.id });
   setSessionCookie(res, result.token);
   res.json({ user: result.user });
 });
@@ -572,8 +733,19 @@ app.use((req, res, next) => {
   });
 });
 
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  logger.error('unhandled-request-error', { error: err, path: req.path, method: req.method });
+  res.status(500).json({ error: 'Internal server error' });
+});
+
 wss.on('connection', (socket, request) => {
   socket.user = requestUser(request);
+
+  socket.on('error', (error) => {
+    logger.error('websocket-error', { error, roomCode: socket.roomCode, playerId: socket.playerId });
+  });
+
   socket.on('message', (raw) => {
     try {
       const message = JSON.parse(raw.toString());
@@ -603,10 +775,17 @@ wss.on('connection', (socket, request) => {
             socket.send(JSON.stringify({ type: 'error', code: 'AUTH_REQUIRED', message: 'Log in to create a room.' }));
             return;
           }
-          const roomData = createRoom({ hostName: message.name || 'Host', hostAccountId: socket.user.id, language: message.language });
+          const roomData = createRoom({
+            hostName: message.name || 'Host',
+            hostAccountId: socket.user.id,
+            language: message.language,
+            hostAvatar: message.avatar,
+            enforceGuessTimeout: Boolean(message.enforceGuessTimeout),
+          });
           attachSocketToRoom(roomData, socket, roomData.hostId);
           sendRoomSession(socket, roomData, 'host', roomData.hostId, roomData.hostName, roomData.hostReconnectToken);
           socket.send(JSON.stringify({ type: 'room-state', state: makeRoomState(roomData) }));
+          logger.event('room-created', { roomCode: roomData.code });
           break;
         }
 
@@ -617,7 +796,7 @@ wss.on('connection', (socket, request) => {
             return;
           }
 
-          const player = addPlayerToRoom(targetRoom, message.name || 'Guest');
+          const player = addPlayerToRoom(targetRoom, message.name || 'Guest', message.avatar);
           if (!player) {
             socket.send(JSON.stringify({ type: 'error', message: 'Duplicate player name or invalid input' }));
             return;
@@ -625,7 +804,42 @@ wss.on('connection', (socket, request) => {
 
           attachSocketToRoom(targetRoom, socket, player.id);
           sendRoomSession(socket, targetRoom, 'player', player.id, player.name, player.reconnectToken);
+          logger.event('room-joined', { roomCode: targetRoom.code, playerId: player.id });
           broadcastRoom(targetRoom);
+          break;
+        }
+
+        case 'leave-room': {
+          if (!room || !socket.playerId || room.hostId === socket.playerId) {
+            return;
+          }
+
+          const removedPlayer = leaveRoom(room, socket.playerId);
+          if (!removedPlayer) {
+            return;
+          }
+
+          socket.send(JSON.stringify({ type: 'left-room' }));
+          logger.event('room-left', { roomCode: room.code, playerId: removedPlayer.id });
+
+          if (rooms.get(message.roomCode)) {
+            broadcastRoom(room);
+            room.clients.forEach((client) => {
+              if (client.readyState === 1) {
+                client.send(JSON.stringify({ type: 'player-left', playerName: removedPlayer.name }));
+              }
+            });
+          }
+          break;
+        }
+
+        case 'close-room': {
+          if (!room || room.hostId !== socket.playerId || room.hostAccountId !== socket.user?.id) {
+            return;
+          }
+
+          logger.event('room-closed', { roomCode: room.code });
+          closeRoom(room);
           break;
         }
 
@@ -634,6 +848,7 @@ wss.on('connection', (socket, request) => {
             return;
           }
 
+          logger.event('round-started', { roomCode: room.code });
           startRound(room, message.question || '');
           break;
         }
@@ -694,11 +909,20 @@ wss.on('connection', (socket, request) => {
           break;
         }
 
+        case 'new-game': {
+          if (!room || room.hostAccountId !== socket.user?.id) {
+            return;
+          }
+          startNewGame(room);
+          break;
+        }
+
         default: {
           socket.send(JSON.stringify({ type: 'error', message: 'Unknown message type' }));
         }
       }
     } catch (error) {
+      logger.warn('websocket-invalid-payload', { error, roomCode: socket.roomCode, playerId: socket.playerId });
       socket.send(JSON.stringify({ type: 'error', message: 'Invalid payload' }));
     }
   });
@@ -729,6 +953,7 @@ wss.on('connection', (socket, request) => {
       }
     }
 
+    logger.info('websocket-closed', { roomCode: room.code, playerId: socket.playerId });
     broadcastRoom(room);
   });
 });
@@ -736,10 +961,17 @@ wss.on('connection', (socket, request) => {
 const membershipCleanup = setInterval(expireDisconnectedMemberships, 60 * 1000);
 membershipCleanup.unref();
 
+const activityMetrics = setInterval(() => {
+  const totalPlayers = [...rooms.values()].reduce((sum, room) => sum + room.players.length, 0);
+  appInsights.defaultClient?.trackMetric({ name: 'active-rooms', value: rooms.size });
+  appInsights.defaultClient?.trackMetric({ name: 'connected-players', value: totalPlayers });
+}, 60 * 1000);
+activityMetrics.unref();
+
 // Only start server if not running in test environment
 if (process.env.NODE_ENV !== 'test' && !globalThis.__VITEST__) {
   server.listen(PORT, () => {
-    console.log(`Guess Party server listening on http://localhost:${PORT}`);
+    logger.info('server-started', { port: PORT });
   });
 }
 
@@ -747,6 +979,8 @@ if (process.env.NODE_ENV !== 'test' && !globalThis.__VITEST__) {
 export {
   findPlayerById,
   addPlayerToRoom,
+  leaveRoom,
+  closeRoom,
   calculateRoundScores,
   evaluateGuess,
   lockAnswers,
@@ -759,6 +993,14 @@ export {
   reconnectRoom,
   expireDisconnectedMemberships,
   reconnectGracePeriodMs,
+  startRound,
+  startNewGame,
+  makeRoomState,
+  normalizeAvatar,
+  AVATAR_OPTIONS,
+  armGuessTimeout,
+  clearGuessTimeout,
+  GUESS_TIMEOUT_SECONDS,
 };
 
 // Graceful shutdown for testing

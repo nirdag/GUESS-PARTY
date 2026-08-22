@@ -1,3 +1,4 @@
+import appInsights from 'applicationinsights';
 import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
@@ -8,6 +9,12 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { createAuthService } from './auth.js';
 import { sendVerificationEmail } from './emailService.js';
+import { logger } from './logger.js';
+
+if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
+  appInsights.setup().setSendLiveMetrics(true).start();
+  appInsights.defaultClient.context.tags[appInsights.defaultClient.context.keys.cloudRole] = 'guess-party';
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDirectory = path.join(__dirname, 'dist');
@@ -26,13 +33,22 @@ const authService = createAuthService({
     sendVerificationEmail({ email, link })
       .then((sent) => {
         if (!sent && !isProduction) {
-          console.log(`Verification link for ${email}: ${link}`);
+          logger.info('verification-link-dev-fallback', { link });
         }
       })
       .catch((error) => {
-        console.error('Failed to send verification email:', error);
+        logger.error('verification-email-send-failed', { error });
       });
   },
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error('uncaught-exception', { error });
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  logger.error('unhandled-rejection', { error: reason instanceof Error ? reason : new Error(String(reason)) });
 });
 const questionBank = [
   'What is the best way to spend a perfect family night?',
@@ -594,6 +610,25 @@ function evaluateGuess(room, guesserId, guessTargetId) {
 app.use(cors({ origin: appOrigin, credentials: true }));
 app.use(express.json());
 
+app.use((req, res, next) => {
+  // Skip static asset GETs (dist/) to keep signal-to-noise high; API/health/rooms paths are what matter operationally.
+  if (req.path === '/' || (req.method === 'GET' && !req.path.startsWith('/auth/') && req.path !== '/health' && req.path !== '/rooms')) {
+    next();
+    return;
+  }
+
+  const startedAt = Date.now();
+  res.on('finish', () => {
+    logger.info('http-request', {
+      method: req.method,
+      path: req.path,
+      statusCode: res.statusCode,
+      durationMs: Date.now() - startedAt,
+    });
+  });
+  next();
+});
+
 function parseCookies(header = '') {
   return Object.fromEntries(
     header.split(';').map((part) => part.trim().split('=').map(decodeURIComponent)).filter(([key, value]) => key && value),
@@ -631,18 +666,22 @@ const authRateLimiter = rateLimit({
 app.post('/auth/signup', authRateLimiter, (req, res) => {
   const result = authService.signUp(req.body?.email, req.body?.password);
   if (result.error) {
+    logger.warn('auth-signup-failed', { code: result.code });
     res.status(400).json({ error: result.error });
     return;
   }
+  logger.event('auth-signup-succeeded', { userId: result.user?.id });
   res.status(201).json({ user: result.user, emailVerificationRequired: true });
 });
 
 app.post('/auth/login', authRateLimiter, (req, res) => {
   const result = authService.login(req.body?.email, req.body?.password);
   if (result.error) {
+    logger.warn('auth-login-failed', { code: result.code });
     res.status(result.code === 'EMAIL_NOT_VERIFIED' ? 403 : 401).json({ error: result.error, code: result.code });
     return;
   }
+  logger.event('auth-login-succeeded', { userId: result.user?.id });
   setSessionCookie(res, result.token);
   res.json({ user: result.user });
 });
@@ -694,8 +733,19 @@ app.use((req, res, next) => {
   });
 });
 
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  logger.error('unhandled-request-error', { error: err, path: req.path, method: req.method });
+  res.status(500).json({ error: 'Internal server error' });
+});
+
 wss.on('connection', (socket, request) => {
   socket.user = requestUser(request);
+
+  socket.on('error', (error) => {
+    logger.error('websocket-error', { error, roomCode: socket.roomCode, playerId: socket.playerId });
+  });
+
   socket.on('message', (raw) => {
     try {
       const message = JSON.parse(raw.toString());
@@ -735,6 +785,7 @@ wss.on('connection', (socket, request) => {
           attachSocketToRoom(roomData, socket, roomData.hostId);
           sendRoomSession(socket, roomData, 'host', roomData.hostId, roomData.hostName, roomData.hostReconnectToken);
           socket.send(JSON.stringify({ type: 'room-state', state: makeRoomState(roomData) }));
+          logger.event('room-created', { roomCode: roomData.code });
           break;
         }
 
@@ -753,6 +804,7 @@ wss.on('connection', (socket, request) => {
 
           attachSocketToRoom(targetRoom, socket, player.id);
           sendRoomSession(socket, targetRoom, 'player', player.id, player.name, player.reconnectToken);
+          logger.event('room-joined', { roomCode: targetRoom.code, playerId: player.id });
           broadcastRoom(targetRoom);
           break;
         }
@@ -768,6 +820,7 @@ wss.on('connection', (socket, request) => {
           }
 
           socket.send(JSON.stringify({ type: 'left-room' }));
+          logger.event('room-left', { roomCode: room.code, playerId: removedPlayer.id });
 
           if (rooms.get(message.roomCode)) {
             broadcastRoom(room);
@@ -785,6 +838,7 @@ wss.on('connection', (socket, request) => {
             return;
           }
 
+          logger.event('room-closed', { roomCode: room.code });
           closeRoom(room);
           break;
         }
@@ -794,6 +848,7 @@ wss.on('connection', (socket, request) => {
             return;
           }
 
+          logger.event('round-started', { roomCode: room.code });
           startRound(room, message.question || '');
           break;
         }
@@ -867,6 +922,7 @@ wss.on('connection', (socket, request) => {
         }
       }
     } catch (error) {
+      logger.warn('websocket-invalid-payload', { error, roomCode: socket.roomCode, playerId: socket.playerId });
       socket.send(JSON.stringify({ type: 'error', message: 'Invalid payload' }));
     }
   });
@@ -897,6 +953,7 @@ wss.on('connection', (socket, request) => {
       }
     }
 
+    logger.info('websocket-closed', { roomCode: room.code, playerId: socket.playerId });
     broadcastRoom(room);
   });
 });
@@ -904,10 +961,17 @@ wss.on('connection', (socket, request) => {
 const membershipCleanup = setInterval(expireDisconnectedMemberships, 60 * 1000);
 membershipCleanup.unref();
 
+const activityMetrics = setInterval(() => {
+  const totalPlayers = [...rooms.values()].reduce((sum, room) => sum + room.players.length, 0);
+  appInsights.defaultClient?.trackMetric({ name: 'active-rooms', value: rooms.size });
+  appInsights.defaultClient?.trackMetric({ name: 'connected-players', value: totalPlayers });
+}, 60 * 1000);
+activityMetrics.unref();
+
 // Only start server if not running in test environment
 if (process.env.NODE_ENV !== 'test' && !globalThis.__VITEST__) {
   server.listen(PORT, () => {
-    console.log(`Guess Party server listening on http://localhost:${PORT}`);
+    logger.info('server-started', { port: PORT });
   });
 }
 
