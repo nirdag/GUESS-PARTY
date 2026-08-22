@@ -152,6 +152,24 @@ button {
   padding: 11px 14px;
 }
 
+.toggle-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.toggle-field input {
+  width: auto;
+  min-height: 0;
+  accent-color: var(--primary, #7c9cff);
+}
+
+.field-hint {
+  color: var(--muted);
+  font-size: 0.85em;
+  margin-top: -4px;
+}
+
 .membership-error {
   min-height: 24px;
   color: var(--secondary);
@@ -494,6 +512,22 @@ h1 {
   color: #d9e5ff;
   font-weight: 600;
   text-align: center;
+}
+
+.timer-box.urgent {
+  background: rgba(248, 113, 113, 0.18);
+  border-color: rgba(248, 113, 113, 0.5);
+  color: #fecaca;
+  animation: timer-pulse 1s ease-in-out infinite;
+}
+
+@keyframes timer-pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
 }
 
 .answer-reveal {

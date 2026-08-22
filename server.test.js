@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   findPlayerById,
   addPlayerToRoom,
@@ -20,6 +20,9 @@ import {
   makeRoomState,
   normalizeAvatar,
   AVATAR_OPTIONS,
+  armGuessTimeout,
+  clearGuessTimeout,
+  GUESS_TIMEOUT_SECONDS,
 } from './server.js';
 
 // Mock room/player creation for testing
@@ -43,6 +46,9 @@ function createTestRoom() {
     hostId: `TEST12-host-${Date.now()}`,
     hostName: 'Host',
     playerTurnIndex: 0,
+    guessTimeoutEnabled: false,
+    guessDeadlineMs: null,
+    guessTimeoutHandle: null,
   };
 }
 
@@ -351,6 +357,82 @@ describe('HIGH: Game Flow Transitions', () => {
     advanceGuessRound(room);
 
     expect(room.guesses).toHaveLength(0);
+  });
+});
+
+describe('HIGH: Guess Round Timeout', () => {
+  let room;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    room = createTestRoom();
+  });
+
+  afterEach(() => {
+    clearGuessTimeout(room);
+    vi.useRealTimers();
+  });
+
+  it('armGuessTimeout does nothing when the room has the timer disabled', () => {
+    room.guessTimeoutEnabled = false;
+    armGuessTimeout(room);
+
+    expect(room.guessTimeoutHandle).toBeNull();
+    expect(room.guessDeadlineMs).toBeNull();
+  });
+
+  it('armGuessTimeout schedules a deadline and auto-calls calculateRoundScores when enabled', () => {
+    room.guessTimeoutEnabled = true;
+    room.phase = 'guessing';
+    room.currentAnswer = { playerId: 'p1', text: 'test answer' };
+    room.guesses = [];
+
+    armGuessTimeout(room);
+
+    expect(room.guessDeadlineMs).toBeGreaterThan(Date.now());
+    expect(room.guessTimeoutHandle).not.toBeNull();
+
+    vi.advanceTimersByTime(GUESS_TIMEOUT_SECONDS * 1000);
+
+    expect(room.phase).toBe('round-end');
+  });
+
+  it('calculateRoundScores clears a pending auto-timeout so it never double-fires', () => {
+    room.guessTimeoutEnabled = true;
+    room.phase = 'guessing';
+    room.currentAnswer = { playerId: 'p1', text: 'test answer' };
+    room.guesses = [];
+
+    armGuessTimeout(room);
+    calculateRoundScores(room);
+
+    expect(room.guessTimeoutHandle).toBeNull();
+    expect(room.phase).toBe('round-end');
+
+    // Advancing time must not throw or re-run scoring against the already-ended round.
+    vi.advanceTimersByTime(GUESS_TIMEOUT_SECONDS * 1000);
+    expect(room.phase).toBe('round-end');
+  });
+
+  it('prepareCurrentAnswer arms a fresh timeout for each new guessing round when enabled', () => {
+    room.guessTimeoutEnabled = true;
+    room.answerQueue = [{ playerId: 'p1', text: 'test answer', playerName: 'Alice' }];
+
+    prepareCurrentAnswer(room);
+
+    expect(room.guessDeadlineMs).not.toBeNull();
+    expect(room.guessTimeoutHandle).not.toBeNull();
+  });
+
+  it('prepareCurrentAnswer clears the timeout when the answer queue is exhausted', () => {
+    room.guessTimeoutEnabled = true;
+    room.answerQueue = [];
+
+    prepareCurrentAnswer(room);
+
+    expect(room.phase).toBe('game-end');
+    expect(room.guessDeadlineMs).toBeNull();
+    expect(room.guessTimeoutHandle).toBeNull();
   });
 });
 

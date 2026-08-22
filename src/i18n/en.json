@@ -25,6 +25,8 @@
   "hostSetup.namePlaceholder": "Host",
   "hostSetup.languageLabel": "Room language",
   "hostSetup.avatarLabel": "Choose your avatar",
+  "hostSetup.enforceTimeoutLabel": "Enforce 20s guess timer",
+  "hostSetup.enforceTimeoutHint": "Players will have 20 seconds to lock in a guess before the round moves on automatically.",
   "hostSetup.submit": "Create room",
   "hostSetup.back": "Back",
 
@@ -86,6 +88,7 @@
   "hostManaging.round": "Round {number}",
   "hostManaging.answerCollection": "Answer collection",
   "hostManaging.guessingPhase": "Guessing phase",
+  "hostManaging.timeLeft": "{seconds}s left",
   "hostManaging.hiddenAnswer": "Hidden answer to reveal",
   "hostManaging.randomAnswer": "Random answer",
   "hostManaging.waitingForReveal": "Waiting for reveal...",

@@ -56,6 +56,8 @@ type RoomState = {
   hostId: string | null
   timeLeft: number
   language: LanguageCode
+  guessTimeoutEnabled: boolean
+  guessDeadlineMs: number | null
 }
 
 const app = document.querySelector<HTMLDivElement>('#app')
@@ -159,6 +161,9 @@ const state = {
   language: getLanguage(),
   selectedAvatar: AVATAR_OPTIONS[0],
   myAvatar: '',
+  enforceGuessTimeout: false,
+  guessTimeoutEnabled: false,
+  guessDeadlineMs: null as number | null,
 }
 
 let queuedAction: (() => void) | null = null
@@ -197,6 +202,15 @@ function buildApiUrl(path: string): string {
 
 function formatScore(value: number): string {
   return t('common.scorePts', { value })
+}
+
+function renderGuessTimerBox(fallbackLabel: string): string {
+  if (state.phase === 'guessing' && state.guessTimeoutEnabled && state.guessDeadlineMs) {
+    const secondsLeft = Math.max(0, Math.ceil((state.guessDeadlineMs - Date.now()) / 1000))
+    return `<div class="timer-box ${secondsLeft <= 5 ? 'urgent' : ''}" data-role="guess-countdown">${t('hostManaging.timeLeft', { seconds: secondsLeft })}</div>`
+  }
+
+  return `<div class="timer-box">${fallbackLabel}</div>`
 }
 
 function formatPlayerInitials(name: string): string {
@@ -278,6 +292,8 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   state.guesses = serverState.guesses ?? state.guesses
   state.timeLeft = serverState.timeLeft ?? state.timeLeft
   state.phase = serverState.phase ?? state.phase
+  state.guessTimeoutEnabled = serverState.guessTimeoutEnabled ?? state.guessTimeoutEnabled
+  state.guessDeadlineMs = serverState.guessDeadlineMs ?? null
   state.hasSubmittedAnswer = state.answers.some((answer) => answer.playerId === state.currentPlayerId)
 
   if (serverState.language) {
@@ -314,14 +330,51 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   }
 
   renderApp()
+  manageGuessCountdown()
 }
 
-function createRoomSession(name: string, language: LanguageCode, avatar: string): void {
+// Recomputed locally from an absolute deadline timestamp so we don't need a broadcast every second.
+let guessCountdownHandle: number | null = null
+
+function stopGuessCountdown(): void {
+  if (guessCountdownHandle !== null) {
+    window.clearInterval(guessCountdownHandle)
+    guessCountdownHandle = null
+  }
+}
+
+function tickGuessCountdown(): void {
+  if (state.phase !== 'guessing' || !state.guessTimeoutEnabled || !state.guessDeadlineMs) {
+    stopGuessCountdown()
+    return
+  }
+
+  const secondsLeft = Math.max(0, Math.ceil((state.guessDeadlineMs - Date.now()) / 1000))
+  root.querySelectorAll<HTMLElement>('[data-role="guess-countdown"]').forEach((element) => {
+    element.textContent = t('hostManaging.timeLeft', { seconds: secondsLeft })
+    element.classList.toggle('urgent', secondsLeft <= 5)
+  })
+}
+
+function manageGuessCountdown(): void {
+  if (state.phase === 'guessing' && state.guessTimeoutEnabled && state.guessDeadlineMs) {
+    if (guessCountdownHandle === null) {
+      tickGuessCountdown()
+      guessCountdownHandle = window.setInterval(tickGuessCountdown, 250)
+    }
+    return
+  }
+
+  stopGuessCountdown()
+}
+
+function createRoomSession(name: string, language: LanguageCode, avatar: string, enforceGuessTimeout: boolean): void {
   const nextName = name.trim() || t('prompts.defaultHostName')
   state.playerName = nextName
   state.role = 'host'
   state.language = language
   state.myAvatar = avatar
+  state.enforceGuessTimeout = enforceGuessTimeout
   isRoomClosed = false
   setLanguage(language)
   shouldRestoreRoomSession = false
@@ -329,12 +382,12 @@ function createRoomSession(name: string, language: LanguageCode, avatar: string)
   state.screen = 'lobby'
 
   if (socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar }))
+    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, enforceGuessTimeout }))
     return
   }
 
   queuedAction = () => {
-    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar }))
+    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, enforceGuessTimeout }))
   }
 
   renderApp()
@@ -564,6 +617,11 @@ function renderHostSetup(): void {
           <select id="host-setup-language">${languageOptions}</select>
           <label>${t('hostSetup.avatarLabel')}</label>
           ${renderAvatarPicker(state.selectedAvatar)}
+          <label class="toggle-field">
+            <input id="host-setup-timeout-toggle" type="checkbox" ${state.enforceGuessTimeout ? 'checked' : ''} />
+            <span>${t('hostSetup.enforceTimeoutLabel')}</span>
+          </label>
+          <small class="field-hint">${t('hostSetup.enforceTimeoutHint')}</small>
           <button class="primary-button" type="submit">${t('hostSetup.submit')}</button>
         </form>
 
@@ -592,7 +650,8 @@ function renderHostSetup(): void {
     event.preventDefault()
     const name = root.querySelector<HTMLInputElement>('#host-setup-name')?.value ?? ''
     const language = (root.querySelector<HTMLSelectElement>('#host-setup-language')?.value ?? 'en') as LanguageCode
-    createRoomSession(name, language, state.selectedAvatar)
+    const enforceGuessTimeout = root.querySelector<HTMLInputElement>('#host-setup-timeout-toggle')?.checked ?? false
+    createRoomSession(name, language, state.selectedAvatar, enforceGuessTimeout)
   })
 }
 
@@ -869,7 +928,7 @@ function renderHostManaging(): void {
             <p class="eyebrow">${t('hostManaging.round', { number: state.answerRoundNumber })}</p>
             <h1>${state.question}</h1>
           </div>
-          <div class="timer-box">${state.phase === 'answer-collection' ? t('hostManaging.answerCollection') : t('hostManaging.guessingPhase')}</div>
+          ${state.phase === 'answer-collection' ? `<div class="timer-box">${t('hostManaging.answerCollection')}</div>` : renderGuessTimerBox(t('hostManaging.guessingPhase'))}
         </div>
 
         <div class="answer-reveal">
@@ -1034,7 +1093,7 @@ function renderPlayerGuessing(): void {
             <p class="eyebrow">${t('hostManaging.round', { number: state.answerRoundNumber })}</p>
             <h1>${state.question}</h1>
           </div>
-          <div class="timer-box">${t('playerGuessing.guessingPhase')}</div>
+          ${renderGuessTimerBox(t('playerGuessing.guessingPhase'))}
         </div>
 
         <div class="answer-reveal">

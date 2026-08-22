@@ -46,6 +46,7 @@ const questionBank = [
 const rooms = new Map();
 const reconnectGracePeriodMs = 30 * 60 * 1000;
 const supportedLanguages = new Set(['en', 'he']);
+const GUESS_TIMEOUT_SECONDS = 20;
 // Fixed allow-list: never trust arbitrary client-supplied avatar strings.
 const AVATAR_OPTIONS = [
   '🦊', '🐸', '🐧', '🐼', '🐨', '🦁', '🐵', '🐯',
@@ -99,6 +100,8 @@ function makeRoomState(room) {
     hostId: room.hostId,
     hostAvatar: room.hostAvatar,
     language: room.language,
+    guessTimeoutEnabled: room.guessTimeoutEnabled,
+    guessDeadlineMs: room.guessDeadlineMs,
   };
 }
 
@@ -224,7 +227,7 @@ function nextTurn(room) {
   }
 }
 
-function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvatar }) {
+function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvatar, enforceGuessTimeout = false }) {
   const code = createRoomCode();
   const room = {
     code,
@@ -250,10 +253,34 @@ function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvata
     hostDisconnectedAt: null,
     playerTurnIndex: 0,
     language: normalizeLanguage(language),
+    guessTimeoutEnabled: Boolean(enforceGuessTimeout),
+    guessDeadlineMs: null,
+    guessTimeoutHandle: null,
   };
 
   rooms.set(code, room);
   return room;
+}
+
+function clearGuessTimeout(room) {
+  if (room.guessTimeoutHandle) {
+    clearTimeout(room.guessTimeoutHandle);
+    room.guessTimeoutHandle = null;
+  }
+  room.guessDeadlineMs = null;
+}
+
+function armGuessTimeout(room) {
+  clearGuessTimeout(room);
+  if (!room.guessTimeoutEnabled) {
+    return;
+  }
+
+  room.guessDeadlineMs = Date.now() + GUESS_TIMEOUT_SECONDS * 1000;
+  room.guessTimeoutHandle = setTimeout(() => {
+    calculateRoundScores(room);
+  }, GUESS_TIMEOUT_SECONDS * 1000);
+  room.guessTimeoutHandle.unref?.();
 }
 
 function addPlayerToRoom(room, name, avatar) {
@@ -311,6 +338,7 @@ function closeRoom(room) {
     return false;
   }
 
+  clearGuessTimeout(room);
   rooms.delete(room.code);
   room.hostReconnectToken = null;
   room.hostDisconnectedAt = null;
@@ -394,6 +422,7 @@ function prepareCurrentAnswer(room) {
     room.timeLeft = 0;
     room.answerAuthorId = null;
     room.selectedAnswer = '';
+    clearGuessTimeout(room);
     broadcastRoom(room);
     return;
   }
@@ -409,6 +438,7 @@ function prepareCurrentAnswer(room) {
   room.activeGuesserIndex = 0;
   room.answerRoundNumber = (room.answers.length || room.answerQueue.length + 1) - room.answerQueue.length;
   room.timeLeft = 0;
+  armGuessTimeout(room);
   broadcastRoom(room);
 }
 
@@ -438,6 +468,8 @@ function moveToNextAnswer(room) {
 }
 
 function calculateRoundScores(room) {
+  clearGuessTimeout(room);
+
   if (room.phase !== 'guessing' || !room.currentAnswer) {
     return;
   }
@@ -693,7 +725,13 @@ wss.on('connection', (socket, request) => {
             socket.send(JSON.stringify({ type: 'error', code: 'AUTH_REQUIRED', message: 'Log in to create a room.' }));
             return;
           }
-          const roomData = createRoom({ hostName: message.name || 'Host', hostAccountId: socket.user.id, language: message.language, hostAvatar: message.avatar });
+          const roomData = createRoom({
+            hostName: message.name || 'Host',
+            hostAccountId: socket.user.id,
+            language: message.language,
+            hostAvatar: message.avatar,
+            enforceGuessTimeout: Boolean(message.enforceGuessTimeout),
+          });
           attachSocketToRoom(roomData, socket, roomData.hostId);
           sendRoomSession(socket, roomData, 'host', roomData.hostId, roomData.hostName, roomData.hostReconnectToken);
           socket.send(JSON.stringify({ type: 'room-state', state: makeRoomState(roomData) }));
@@ -896,6 +934,9 @@ export {
   makeRoomState,
   normalizeAvatar,
   AVATAR_OPTIONS,
+  armGuessTimeout,
+  clearGuessTimeout,
+  GUESS_TIMEOUT_SECONDS,
 };
 
 // Graceful shutdown for testing
