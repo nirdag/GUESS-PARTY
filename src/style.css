@@ -85,6 +85,16 @@ button {
   font-weight: 700;
 }
 
+.quit-button {
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  border-radius: 999px;
+  background: rgba(248, 113, 113, 0.12);
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 12px;
+}
+
 .panel {
   background: rgba(23, 31, 59, 0.94);
   border: 1px solid var(--border);

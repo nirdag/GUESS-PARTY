@@ -5,6 +5,7 @@
   "common.guest": "אורח",
   "common.scorePts": "{value} נק'",
   "common.back": "חזרה",
+  "common.quit": "עזוב",
 
   "welcome.eyebrow": "מסיבת ניחושים",
   "welcome.title": "מי כתב את התשובה?",
@@ -142,6 +143,8 @@
   "prompts.connectionClosed": "החיבור לשרת המשחק נסגר. רענן את הדף כדי להתחבר מחדש.",
   "prompts.defaultPlayerName": "שחקן",
   "prompts.defaultHostName": "מנחה",
+  "prompts.confirmQuit": "האם אתה בטוח שברצונך לעזוב את החדר?",
+  "prompts.playerLeft": "{name} עזב את החדר.",
 
   "errors.AUTH_REQUIRED": "התחבר כדי ליצור חדר.",
   "errors.ROOM_SESSION_EXPIRED": "חדר זה אינו זמין עוד.",

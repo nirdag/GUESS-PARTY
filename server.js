@@ -268,6 +268,29 @@ function addPlayerToRoom(room, name) {
   return player;
 }
 
+function leaveRoom(room, playerId) {
+  const playerIndex = room.players.findIndex((player) => player.id === playerId);
+  if (playerIndex === -1) {
+    return null;
+  }
+
+  const [removedPlayer] = room.players.splice(playerIndex, 1);
+
+  [...room.clients].forEach((client) => {
+    if (client.playerId === playerId) {
+      room.clients.delete(client);
+      client.roomCode = null;
+      client.playerId = null;
+    }
+  });
+
+  if (!room.hostId && room.players.length === 0) {
+    rooms.delete(room.code);
+  }
+
+  return removedPlayer;
+}
+
 function startRound(room, customQuestion = '') {
   if (room.players.length < 1) {
     return;
@@ -648,6 +671,29 @@ wss.on('connection', (socket, request) => {
           break;
         }
 
+        case 'leave-room': {
+          if (!room || !socket.playerId || room.hostId === socket.playerId) {
+            return;
+          }
+
+          const removedPlayer = leaveRoom(room, socket.playerId);
+          if (!removedPlayer) {
+            return;
+          }
+
+          socket.send(JSON.stringify({ type: 'left-room' }));
+
+          if (rooms.get(message.roomCode)) {
+            broadcastRoom(room);
+            room.clients.forEach((client) => {
+              if (client.readyState === 1) {
+                client.send(JSON.stringify({ type: 'player-left', playerName: removedPlayer.name }));
+              }
+            });
+          }
+          break;
+        }
+
         case 'start-round': {
           if (!room || room.hostAccountId !== socket.user?.id) {
             return;
@@ -774,6 +820,7 @@ if (process.env.NODE_ENV !== 'test' && !globalThis.__VITEST__) {
 export {
   findPlayerById,
   addPlayerToRoom,
+  leaveRoom,
   calculateRoundScores,
   evaluateGuess,
   lockAnswers,

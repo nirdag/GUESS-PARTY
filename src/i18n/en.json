@@ -5,6 +5,7 @@
   "common.guest": "Guest",
   "common.scorePts": "{value} pts",
   "common.back": "Back",
+  "common.quit": "Quit",
 
   "welcome.eyebrow": "Guess Party",
   "welcome.title": "Who wrote the answer?",
@@ -142,6 +143,8 @@
   "prompts.connectionClosed": "The game server connection was closed. Refresh the page to reconnect.",
   "prompts.defaultPlayerName": "Player",
   "prompts.defaultHostName": "Host",
+  "prompts.confirmQuit": "Are you sure you want to leave the room?",
+  "prompts.playerLeft": "{name} left the room.",
 
   "errors.AUTH_REQUIRED": "Log in to create a room.",
   "errors.ROOM_SESSION_EXPIRED": "This room is no longer available.",

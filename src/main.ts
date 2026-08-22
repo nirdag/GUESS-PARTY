@@ -66,6 +66,13 @@ if (!app) {
 const root = app
 const roomSessionStorageKey = 'guess-party-room-session'
 
+root.addEventListener('click', (event) => {
+  const target = event.target as HTMLElement
+  if (target.closest('[data-role="quit-room"]')) {
+    quitRoom()
+  }
+})
+
 function readStoredRoomSession(): RoomSession | null {
   try {
     const stored = window.localStorage.getItem(roomSessionStorageKey)
@@ -415,6 +422,14 @@ function requestNewGame(): void {
   sendSocketMessage('new-game')
 }
 
+function quitRoom(): void {
+  if (!window.confirm(t('prompts.confirmQuit'))) {
+    return
+  }
+
+  sendSocketMessage('leave-room')
+}
+
 function renderIdentityBanner(): string {
   const displayName = state.playerName || t('common.guest')
   const roleLabel = state.role === 'host' ? t('common.host') : t('common.player')
@@ -424,6 +439,7 @@ function renderIdentityBanner(): string {
       <span>${t('common.playingAs')}</span>
       <strong>${displayName}</strong>
       <span class="identity-role">${roleLabel}</span>
+      ${state.role === 'player' ? `<button class="quit-button" type="button" data-role="quit-room">${t('common.quit')}</button>` : ''}
     </div>
   `
 }
@@ -1150,6 +1166,23 @@ socket.addEventListener('message', (event) => {
 
     if (payload.type === 'room-state') {
       applyRoomState(payload.state)
+      return
+    }
+
+    if (payload.type === 'left-room') {
+      clearStoredRoomSession()
+      shouldRestoreRoomSession = false
+      state.screen = 'welcome'
+      state.roomCode = ''
+      state.playerName = ''
+      state.currentPlayerId = ''
+      state.players = []
+      renderApp()
+      return
+    }
+
+    if (payload.type === 'player-left') {
+      window.alert(t('prompts.playerLeft', { name: payload.playerName }))
       return
     }
 

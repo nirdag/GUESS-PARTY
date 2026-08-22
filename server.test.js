@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   findPlayerById,
   addPlayerToRoom,
+  leaveRoom,
   calculateRoundScores,
   evaluateGuess,
   lockAnswers,
@@ -439,6 +440,43 @@ describe('HIGH: Player Management', () => {
     const player = addPlayerToRoom(room, '  Alice  ');
 
     expect(player.name).toBe('Alice');
+  });
+});
+
+describe('HIGH: Leave Room', () => {
+  let room;
+
+  beforeEach(() => {
+    room = createTestRoom();
+  });
+
+  it('leaveRoom removes the player and their socket from the room', () => {
+    const player = addPlayerToRoom(room, 'Alice');
+    const socket = { playerId: player.id, readyState: 1 };
+    room.clients.add(socket);
+
+    const removed = leaveRoom(room, player.id);
+
+    expect(removed.id).toBe(player.id);
+    expect(room.players).toHaveLength(0);
+    expect(room.clients.has(socket)).toBe(false);
+    expect(socket.roomCode).toBeNull();
+    expect(socket.playerId).toBeNull();
+  });
+
+  it('leaveRoom returns null for an unknown player id', () => {
+    const removed = leaveRoom(room, 'not-a-real-id');
+
+    expect(removed).toBeNull();
+  });
+
+  it('leaveRoom does not remove the host', () => {
+    addPlayerToRoom(room, 'Alice');
+
+    const removed = leaveRoom(room, room.hostId);
+
+    expect(removed).toBeNull();
+    expect(room.players).toHaveLength(1);
   });
 });
 
