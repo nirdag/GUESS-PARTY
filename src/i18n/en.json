@@ -6,6 +6,7 @@
   "common.scorePts": "{value} pts",
   "common.back": "Back",
   "common.quit": "Quit",
+  "common.closeRoom": "Close room",
 
   "welcome.eyebrow": "Guess Party",
   "welcome.title": "Who wrote the answer?",
@@ -23,8 +24,20 @@
   "hostSetup.nameLabel": "Your display name",
   "hostSetup.namePlaceholder": "Host",
   "hostSetup.languageLabel": "Room language",
+  "hostSetup.avatarLabel": "Choose your avatar",
   "hostSetup.submit": "Create room",
   "hostSetup.back": "Back",
+
+  "joinSetup.eyebrow": "Join a room",
+  "joinSetup.title": "Set up your player",
+  "joinSetup.subtitle": "Choose your display name, room code, and avatar.",
+  "joinSetup.nameLabel": "Your display name",
+  "joinSetup.namePlaceholder": "Player",
+  "joinSetup.roomCodeLabel": "Room code",
+  "joinSetup.roomCodePlaceholder": "Enter the room code",
+  "joinSetup.avatarLabel": "Choose your avatar",
+  "joinSetup.submit": "Join room",
+  "joinSetup.back": "Back",
 
   "membership.eyebrow": "Host membership",
   "membership.title": "Become a host",
@@ -144,6 +157,9 @@
   "prompts.defaultPlayerName": "Player",
   "prompts.defaultHostName": "Host",
   "prompts.confirmQuit": "Are you sure you want to leave the room?",
+  "prompts.confirmCloseRoom": "Close this room? All players will be disconnected and the room cannot be reopened.",
+  "prompts.roomClosed": "The host closed the room.",
+  "prompts.guessAlreadyLocked": "Your guess is locked and cannot be changed.",
   "prompts.playerLeft": "{name} left the room.",
 
   "errors.AUTH_REQUIRED": "Log in to create a room.",

@@ -3,6 +3,7 @@ import {
   findPlayerById,
   addPlayerToRoom,
   leaveRoom,
+  closeRoom,
   calculateRoundScores,
   evaluateGuess,
   lockAnswers,
@@ -17,6 +18,8 @@ import {
   startRound,
   startNewGame,
   makeRoomState,
+  normalizeAvatar,
+  AVATAR_OPTIONS,
 } from './server.js';
 
 // Mock room/player creation for testing
@@ -234,6 +237,7 @@ describe('CRITICAL: Guess Validation', () => {
 
     evaluateGuess(room, 'p2', 'p1');
     expect(room.guesses).toHaveLength(1);
+    expect(room.guesses[0].guessedId).toBe('p3');
   });
 
   it('evaluateGuess records valid guess', () => {
@@ -441,6 +445,29 @@ describe('HIGH: Player Management', () => {
 
     expect(player.name).toBe('Alice');
   });
+
+  it('addPlayerToRoom stores a valid avatar', () => {
+    const player = addPlayerToRoom(room, 'Alice', AVATAR_OPTIONS[3]);
+
+    expect(player.avatar).toBe(AVATAR_OPTIONS[3]);
+  });
+
+  it('addPlayerToRoom falls back to the default avatar for an unlisted value', () => {
+    const player = addPlayerToRoom(room, 'Alice', '💀');
+
+    expect(player.avatar).toBe(AVATAR_OPTIONS[0]);
+  });
+});
+
+describe('MEDIUM: Avatar Normalization', () => {
+  it('normalizeAvatar accepts a value from the allow-list', () => {
+    expect(normalizeAvatar(AVATAR_OPTIONS[5])).toBe(AVATAR_OPTIONS[5]);
+  });
+
+  it('normalizeAvatar falls back to the default for invalid input', () => {
+    expect(normalizeAvatar('not-an-emoji')).toBe(AVATAR_OPTIONS[0]);
+    expect(normalizeAvatar(undefined)).toBe(AVATAR_OPTIONS[0]);
+  });
 });
 
 describe('HIGH: Leave Room', () => {
@@ -477,6 +504,52 @@ describe('HIGH: Leave Room', () => {
 
     expect(removed).toBeNull();
     expect(room.players).toHaveLength(1);
+  });
+});
+
+describe('HIGH: Close Room', () => {
+  function createTestSocket() {
+    return {
+      readyState: 1,
+      sent: [],
+      closeCalls: 0,
+      send(message) {
+        this.sent.push(JSON.parse(message));
+      },
+      close() {
+        this.closeCalls += 1;
+      },
+    };
+  }
+
+  it('deletes the room, notifies every client, and invalidates reconnect sessions', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account' });
+    const player = addPlayerToRoom(room, 'Alice');
+    const playerReconnectToken = player.reconnectToken;
+    const hostSocket = createTestSocket();
+    const playerSocket = createTestSocket();
+    hostSocket.playerId = room.hostId;
+    playerSocket.playerId = player.id;
+    room.clients.add(hostSocket);
+    room.clients.add(playerSocket);
+
+    const result = closeRoom(room);
+
+    expect(result).toBe(true);
+    expect(findRoomByCode(room.code)).toBeUndefined();
+    expect(hostSocket.sent).toEqual([{ type: 'room-closed' }]);
+    expect(playerSocket.sent).toEqual([{ type: 'room-closed' }]);
+    expect(hostSocket.closeCalls).toBe(1);
+    expect(playerSocket.closeCalls).toBe(1);
+    expect(room.clients).toHaveLength(0);
+    expect(reconnectRoom(room, hostSocket, { role: 'host', reconnectToken: 'old-token' })).toBeNull();
+    expect(reconnectRoom(room, playerSocket, { role: 'player', reconnectToken: playerReconnectToken })).toBeNull();
+  });
+
+  it('does not close an unknown room', () => {
+    const result = closeRoom(createTestRoom());
+
+    expect(result).toBe(false);
   });
 });
 

@@ -67,7 +67,7 @@ button {
   border-radius: 12px;
 }
 
-.identity-banner > span:first-child {
+.identity-banner .identity-label {
   color: var(--muted);
 }
 
@@ -93,6 +93,10 @@ button {
   font-size: 12px;
   font-weight: 700;
   padding: 5px 12px;
+}
+
+.guess-card.locked:not(.selected) {
+  opacity: 0.65;
 }
 
 .panel {
@@ -412,7 +416,34 @@ h1 {
   align-items: center;
   justify-content: center;
   font-weight: 700;
+  font-size: 16px;
   color: white;
+  flex-shrink: 0;
+}
+
+.avatar-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.avatar-option {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--panel-alt);
+  font-size: 20px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.avatar-option.selected {
+  border-color: rgba(124, 156, 255, 0.8);
+  background: rgba(124, 156, 255, 0.15);
 }
 
 .leaderboard-row,

@@ -2,7 +2,7 @@ import './style.css'
 import { type LanguageCode, getLanguage, languages, setLanguage, t } from './i18n'
 
 type Role = 'host' | 'player'
-type Screen = 'welcome' | 'membership' | 'host-setup' | 'lobby' | 'host-managing' | 'player-answering' | 'player-guessing' | 'round-end' | 'game-end'
+type Screen = 'welcome' | 'membership' | 'host-setup' | 'join-setup' | 'lobby' | 'host-managing' | 'player-answering' | 'player-guessing' | 'round-end' | 'game-end'
 
 type Account = {
   id: string
@@ -22,6 +22,7 @@ type Player = {
   id: string
   name: string
   score: number
+  avatar: string
 }
 
 type GuessRecord = {
@@ -59,6 +60,13 @@ type RoomState = {
 
 const app = document.querySelector<HTMLDivElement>('#app')
 
+// Must match server.js AVATAR_OPTIONS exactly; the server re-validates against its own copy.
+const AVATAR_OPTIONS = [
+  '🦊', '🐸', '🐧', '🐼', '🐨', '🦁', '🐵', '🐯',
+  '🐮', '🐷', '🐙', '🦄', '🐝', '🦋', '🐢', '🐳',
+  '🦖', '🌵', '🍕', '🎧', '🚀', '⭐', '🎲', '🎨',
+]
+
 if (!app) {
   throw new Error('App root not found')
 }
@@ -70,6 +78,18 @@ root.addEventListener('click', (event) => {
   const target = event.target as HTMLElement
   if (target.closest('[data-role="quit-room"]')) {
     quitRoom()
+    return
+  }
+
+  if (target.closest('[data-role="close-room"]')) {
+    closeRoom()
+    return
+  }
+
+  const avatarButton = target.closest<HTMLElement>('[data-avatar]')
+  if (avatarButton) {
+    state.selectedAvatar = avatarButton.dataset.avatar ?? state.selectedAvatar
+    renderApp()
   }
 })
 
@@ -137,11 +157,14 @@ const state = {
   selectedGuessId: null as string | null,
   hasSubmittedAnswer: false,
   language: getLanguage(),
+  selectedAvatar: AVATAR_OPTIONS[0],
+  myAvatar: '',
 }
 
 let queuedAction: (() => void) | null = null
 let shouldRestoreRoomSession = Boolean(storedRoomSession)
 let isPageUnloading = false
+let isRoomClosed = false
 
 // Vite dev server (5173) proxies nothing, so dev must reach the API/WS server on its own port.
 const DEV_API_PORT = '8080'
@@ -176,6 +199,24 @@ function formatScore(value: number): string {
 
 function formatPlayerInitials(name: string): string {
   return name.trim().charAt(0).toUpperCase() || '?'
+}
+
+function formatPlayerAvatar(player: Player | undefined): string {
+  return player?.avatar || formatPlayerInitials(player?.name ?? '')
+}
+
+function renderAvatarPicker(selected: string): string {
+  const options = AVATAR_OPTIONS
+    .map(
+      (avatar) => `
+        <button type="button" class="avatar-option ${avatar === selected ? 'selected' : ''}" data-avatar="${avatar}" aria-pressed="${avatar === selected}">
+          ${avatar}
+        </button>
+      `,
+    )
+    .join('')
+
+  return `<div class="avatar-picker">${options}</div>`
 }
 
 function getCurrentPlayer(): Player | undefined {
@@ -273,23 +314,25 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   renderApp()
 }
 
-function createRoomSession(name: string, language: LanguageCode): void {
+function createRoomSession(name: string, language: LanguageCode, avatar: string): void {
   const nextName = name.trim() || t('prompts.defaultHostName')
   state.playerName = nextName
   state.role = 'host'
   state.language = language
+  state.myAvatar = avatar
+  isRoomClosed = false
   setLanguage(language)
   shouldRestoreRoomSession = false
   clearStoredRoomSession()
   state.screen = 'lobby'
 
   if (socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language }))
+    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar }))
     return
   }
 
   queuedAction = () => {
-    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language }))
+    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar }))
   }
 
   renderApp()
@@ -314,30 +357,30 @@ async function openHostFlow(): Promise<void> {
   renderApp()
 }
 
-function joinRoomSession(): void {
-  const rawName = window.prompt(t('prompts.enterPlayerName'), state.playerName || t('prompts.defaultPlayerName')) ?? t('prompts.defaultPlayerName')
-  const name = rawName.trim() || t('prompts.defaultPlayerName')
-  const rawRoomCode = window.prompt(t('prompts.enterRoomCode'), state.roomCode || '') ?? ''
-  const roomCode = rawRoomCode.trim().toUpperCase()
+function joinRoomSession(name: string, roomCode: string, avatar: string): void {
+  const nextName = name.trim() || t('prompts.defaultPlayerName')
+  const nextRoomCode = roomCode.trim().toUpperCase()
 
-  if (!roomCode) {
+  if (!nextRoomCode) {
     window.alert(t('prompts.roomCodeRequired'))
     return
   }
 
-  state.playerName = name
+  state.playerName = nextName
   state.role = 'player'
-  state.roomCode = roomCode
+  state.roomCode = nextRoomCode
+  state.myAvatar = avatar
+  isRoomClosed = false
   shouldRestoreRoomSession = false
   clearStoredRoomSession()
 
   if (socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: 'join-room', name, roomCode }))
+    socket.send(JSON.stringify({ type: 'join-room', name: nextName, roomCode: nextRoomCode, avatar }))
     return
   }
 
   queuedAction = () => {
-    socket.send(JSON.stringify({ type: 'join-room', name, roomCode }))
+    socket.send(JSON.stringify({ type: 'join-room', name: nextName, roomCode: nextRoomCode, avatar }))
   }
 
   renderApp()
@@ -386,6 +429,12 @@ function handleGuess(guessId: string): void {
     return
   }
 
+  const existingGuess = state.guesses.find((guess) => guess.guesserId === state.currentPlayerId)
+  if (state.selectedGuessId || existingGuess) {
+    window.alert(t('prompts.guessAlreadyLocked'))
+    return
+  }
+
   state.selectedGuessId = guessId
   sendSocketMessage('guess', { playerId: state.currentPlayerId, targetPlayerId: guessId })
 }
@@ -430,16 +479,28 @@ function quitRoom(): void {
   sendSocketMessage('leave-room')
 }
 
+function closeRoom(): void {
+  if (!window.confirm(t('prompts.confirmCloseRoom'))) {
+    return
+  }
+
+  sendSocketMessage('close-room')
+}
+
 function renderIdentityBanner(): string {
   const displayName = state.playerName || t('common.guest')
   const roleLabel = state.role === 'host' ? t('common.host') : t('common.player')
+  const avatar = state.myAvatar || formatPlayerInitials(displayName)
 
   return `
     <div class="identity-banner">
-      <span>${t('common.playingAs')}</span>
+      <span class="avatar">${avatar}</span>
+      <span class="identity-label">${t('common.playingAs')}</span>
       <strong>${displayName}</strong>
       <span class="identity-role">${roleLabel}</span>
-      ${state.role === 'player' ? `<button class="quit-button" type="button" data-role="quit-room">${t('common.quit')}</button>` : ''}
+      ${state.role === 'host'
+        ? `<button class="quit-button" type="button" data-role="close-room">${t('common.closeRoom')}</button>`
+        : `<button class="quit-button" type="button" data-role="quit-room">${t('common.quit')}</button>`}
     </div>
   `
 }
@@ -471,11 +532,14 @@ function renderWelcome(): void {
 
   root.querySelector('[data-role="create-room"]')?.addEventListener('click', () => {
     state.customQuestion = ''
+    state.selectedAvatar = AVATAR_OPTIONS[0]
     void openHostFlow()
   })
 
   root.querySelector('[data-role="join-room"]')?.addEventListener('click', () => {
-    joinRoomSession()
+    state.selectedAvatar = AVATAR_OPTIONS[0]
+    state.screen = 'join-setup'
+    renderApp()
   })
 }
 
@@ -496,6 +560,8 @@ function renderHostSetup(): void {
           <input id="host-setup-name" type="text" placeholder="${t('hostSetup.namePlaceholder')}" value="${state.playerName}" required />
           <label for="host-setup-language">${t('hostSetup.languageLabel')}</label>
           <select id="host-setup-language">${languageOptions}</select>
+          <label>${t('hostSetup.avatarLabel')}</label>
+          ${renderAvatarPicker(state.selectedAvatar)}
           <button class="primary-button" type="submit">${t('hostSetup.submit')}</button>
         </form>
 
@@ -511,11 +577,61 @@ function renderHostSetup(): void {
     renderApp()
   })
 
+  root.querySelector<HTMLInputElement>('#host-setup-name')?.addEventListener('input', (event) => {
+    state.playerName = (event.target as HTMLInputElement).value
+  })
+
   root.querySelector<HTMLFormElement>('#host-setup-form')?.addEventListener('submit', (event) => {
     event.preventDefault()
     const name = root.querySelector<HTMLInputElement>('#host-setup-name')?.value ?? ''
     const language = (root.querySelector<HTMLSelectElement>('#host-setup-language')?.value ?? 'en') as LanguageCode
-    createRoomSession(name, language)
+    createRoomSession(name, language, state.selectedAvatar)
+  })
+}
+
+function renderJoinSetup(): void {
+  root.innerHTML = `
+    <main class="shell">
+      <section class="panel membership-panel">
+        <p class="eyebrow">${t('joinSetup.eyebrow')}</p>
+        <h1>${t('joinSetup.title')}</h1>
+        <p class="subtitle">${t('joinSetup.subtitle')}</p>
+
+        <form id="join-setup-form" class="membership-form">
+          <label for="join-setup-name">${t('joinSetup.nameLabel')}</label>
+          <input id="join-setup-name" type="text" placeholder="${t('joinSetup.namePlaceholder')}" value="${state.playerName}" required />
+          <label for="join-setup-room-code">${t('joinSetup.roomCodeLabel')}</label>
+          <input id="join-setup-room-code" type="text" placeholder="${t('joinSetup.roomCodePlaceholder')}" value="${state.roomCode}" required />
+          <label>${t('joinSetup.avatarLabel')}</label>
+          ${renderAvatarPicker(state.selectedAvatar)}
+          <button class="primary-button" type="submit">${t('joinSetup.submit')}</button>
+        </form>
+
+        <div class="membership-actions">
+          <button class="ghost-button" type="button" data-role="join-setup-back">${t('joinSetup.back')}</button>
+        </div>
+      </section>
+    </main>
+  `
+
+  root.querySelector('[data-role="join-setup-back"]')?.addEventListener('click', () => {
+    state.screen = 'welcome'
+    renderApp()
+  })
+
+  root.querySelector<HTMLInputElement>('#join-setup-name')?.addEventListener('input', (event) => {
+    state.playerName = (event.target as HTMLInputElement).value
+  })
+
+  root.querySelector<HTMLInputElement>('#join-setup-room-code')?.addEventListener('input', (event) => {
+    state.roomCode = (event.target as HTMLInputElement).value
+  })
+
+  root.querySelector<HTMLFormElement>('#join-setup-form')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const name = root.querySelector<HTMLInputElement>('#join-setup-name')?.value ?? ''
+    const roomCode = root.querySelector<HTMLInputElement>('#join-setup-room-code')?.value ?? ''
+    joinRoomSession(name, roomCode, state.selectedAvatar)
   })
 }
 
@@ -639,7 +755,7 @@ function renderLobby(): void {
             .map(
               (player) => `
                 <div class="player-pill ${player.id === state.currentPlayerId ? 'active' : ''}">
-                  <span class="avatar">${formatPlayerInitials(player.name)}</span>
+                  <span class="avatar">${formatPlayerAvatar(player)}</span>
                   <span>${player.name}</span>
                 </div>
               `,
@@ -697,7 +813,7 @@ function renderLobby(): void {
             .map(
               (player, index) => `
                 <div class="leaderboard-row ${index === 0 ? 'winner' : ''}">
-                  <span>#${index + 1} ${player.name}</span>
+                  <span>#${index + 1} ${formatPlayerAvatar(player)} ${player.name}</span>
                   <strong>${formatScore(player.score)}</strong>
                 </div>
               `,
@@ -774,7 +890,7 @@ function renderHostManaging(): void {
                   const guess = guessMap.get(player.id)
                   return `
                     <div class="guess-status-row ${guess ? 'done' : 'waiting'}">
-                      <span>${player.name}</span>
+                      <span>${formatPlayerAvatar(player)} ${player.name}</span>
                       <strong>${guess ? t('hostManaging.guessedLabel', { name: guess.guessedName }) : t('hostManaging.notGuessedYet')}</strong>
                     </div>
                   `
@@ -819,7 +935,7 @@ function renderHostManaging(): void {
             .map(
               (player, index) => `
                 <div class="leaderboard-row ${index === 0 ? 'winner' : ''}">
-                  <span>#${index + 1} ${player.name}</span>
+                  <span>#${index + 1} ${formatPlayerAvatar(player)} ${player.name}</span>
                   <strong>${formatScore(player.score)}</strong>
                 </div>
               `,
@@ -897,6 +1013,7 @@ function renderPlayerAnswering(): void {
 function renderPlayerGuessing(): void {
   const guessOptions = state.players.filter((player) => player.id !== state.currentPlayerId)
   const selectedGuessId = state.selectedGuessId ?? state.guesses.find((entry) => entry.guesserId === state.currentPlayerId)?.guessedId ?? null
+  const guessIsLocked = Boolean(selectedGuessId)
   const currentPlayer = getCurrentPlayer()
   const currentPlayerRank = getCurrentPlayerRank()
   const placementLabel = currentPlayerRank === 1 ? t('playerGuessing.place1') : currentPlayerRank === 2 ? t('playerGuessing.place2') : currentPlayerRank === 3 ? t('playerGuessing.place3') : null
@@ -935,8 +1052,8 @@ function renderPlayerGuessing(): void {
           ${guessOptions
             .map(
               (player) => `
-                <button type="button" class="guess-card ${selectedGuessId === player.id ? 'selected' : ''}" data-guess-id="${player.id}">
-                  <span>${player.name}</span>
+                <button type="button" class="guess-card ${selectedGuessId === player.id ? 'selected' : ''} ${guessIsLocked ? 'locked' : ''}" data-guess-id="${player.id}">
+                  <span>${formatPlayerAvatar(player)} ${player.name}</span>
                   <small>${t('playerGuessing.guessThisPerson')}</small>
                 </button>
               `,
@@ -976,7 +1093,7 @@ function renderRoundEnd(): void {
             .map(
               (player, index) => `
                 <div class="leaderboard-row ${index === 0 ? 'winner' : ''}">
-                  <span>#${index + 1} ${player.name}</span>
+                  <span>#${index + 1} ${formatPlayerAvatar(player)} ${player.name}</span>
                   <strong>${formatScore(player.score)}</strong>
                 </div>
               `,
@@ -997,7 +1114,10 @@ function renderRoundEnd(): void {
 
         <div class="mini-card">
           <span>${t('roundEnd.writtenBy')}</span>
-          <strong>${state.players.find((player) => player.id === state.answerAuthorId)?.name ?? t('roundEnd.unknown')}</strong>
+          <strong>${(() => {
+            const author = state.players.find((player) => player.id === state.answerAuthorId)
+            return author ? `${formatPlayerAvatar(author)} ${author.name}` : t('roundEnd.unknown')
+          })()}</strong>
         </div>
 
         <div class="result-list">
@@ -1047,7 +1167,7 @@ function renderGameEnd(): void {
             .map(
               (player, index) => `
                 <div class="leaderboard-row ${index === 0 ? 'winner' : index === 1 ? 'second' : index === 2 ? 'third' : ''}">
-                  <span>#${index + 1} ${player.name}</span>
+                  <span>#${index + 1} ${formatPlayerAvatar(player)} ${player.name}</span>
                   <strong>${formatScore(player.score)}</strong>
                 </div>
               `,
@@ -1066,7 +1186,7 @@ function renderGameEnd(): void {
             .map(
               (player, index) => `
                 <div class="result-row success">
-                  <span>${[t('gameEnd.gold'), t('gameEnd.silver'), t('gameEnd.bronze')][index]} — ${player.name}</span>
+                  <span>${[t('gameEnd.gold'), t('gameEnd.silver'), t('gameEnd.bronze')][index]} — ${formatPlayerAvatar(player)} ${player.name}</span>
                   <strong>${formatScore(player.score)}</strong>
                 </div>
               `,
@@ -1098,6 +1218,11 @@ function renderApp(): void {
 
   if (state.screen === 'host-setup') {
     renderHostSetup()
+    return
+  }
+
+  if (state.screen === 'join-setup') {
+    renderJoinSetup()
     return
   }
 
@@ -1181,6 +1306,20 @@ socket.addEventListener('message', (event) => {
       return
     }
 
+    if (payload.type === 'room-closed') {
+      isRoomClosed = true
+      clearStoredRoomSession()
+      shouldRestoreRoomSession = false
+      state.screen = 'welcome'
+      state.roomCode = ''
+      state.playerName = ''
+      state.currentPlayerId = ''
+      state.players = []
+      window.alert(t('prompts.roomClosed'))
+      renderApp()
+      return
+    }
+
     if (payload.type === 'player-left') {
       window.alert(t('prompts.playerLeft', { name: payload.playerName }))
       return
@@ -1204,7 +1343,7 @@ socket.addEventListener('message', (event) => {
 })
 
 socket.addEventListener('close', () => {
-  if (!isPageUnloading) {
+  if (!isPageUnloading && !isRoomClosed) {
     window.alert(t('prompts.connectionClosed'))
   }
 })

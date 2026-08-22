@@ -46,9 +46,20 @@ const questionBank = [
 const rooms = new Map();
 const reconnectGracePeriodMs = 30 * 60 * 1000;
 const supportedLanguages = new Set(['en', 'he']);
+// Fixed allow-list: never trust arbitrary client-supplied avatar strings.
+const AVATAR_OPTIONS = [
+  '🦊', '🐸', '🐧', '🐼', '🐨', '🦁', '🐵', '🐯',
+  '🐮', '🐷', '🐙', '🦄', '🐝', '🦋', '🐢', '🐳',
+  '🦖', '🌵', '🍕', '🎧', '🚀', '⭐', '🎲', '🎨',
+];
+const defaultAvatar = AVATAR_OPTIONS[0];
 
 function normalizeLanguage(language) {
   return supportedLanguages.has(language) ? language : 'en';
+}
+
+function normalizeAvatar(avatar) {
+  return AVATAR_OPTIONS.includes(avatar) ? avatar : defaultAvatar;
 }
 
 function createRoomCode() {
@@ -67,6 +78,7 @@ function safePlayer(player) {
     id: player.id,
     name: player.name,
     score: player.score,
+    avatar: player.avatar,
   };
 }
 
@@ -85,6 +97,7 @@ function makeRoomState(room) {
     guesses: room.guesses,
     roundResults: room.roundResults,
     hostId: room.hostId,
+    hostAvatar: room.hostAvatar,
     language: room.language,
   };
 }
@@ -211,7 +224,7 @@ function nextTurn(room) {
   }
 }
 
-function createRoom({ hostName, hostAccountId = null, language = 'en' }) {
+function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvatar }) {
   const code = createRoomCode();
   const room = {
     code,
@@ -232,6 +245,7 @@ function createRoom({ hostName, hostAccountId = null, language = 'en' }) {
     hostId: `${code}-host-${Date.now()}`,
     hostAccountId,
     hostName: (hostName || 'Host').trim() || 'Host',
+    hostAvatar: normalizeAvatar(hostAvatar),
     hostReconnectToken: createReconnectToken(),
     hostDisconnectedAt: null,
     playerTurnIndex: 0,
@@ -242,7 +256,7 @@ function createRoom({ hostName, hostAccountId = null, language = 'en' }) {
   return room;
 }
 
-function addPlayerToRoom(room, name) {
+function addPlayerToRoom(room, name, avatar) {
   const trimmed = (name || '').trim();
   if (!trimmed) {
     return null;
@@ -260,6 +274,7 @@ function addPlayerToRoom(room, name) {
     id: `${room.code}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
     name: trimmed,
     score: 0,
+    avatar: normalizeAvatar(avatar),
     reconnectToken: createReconnectToken(),
     disconnectedAt: null,
   };
@@ -289,6 +304,33 @@ function leaveRoom(room, playerId) {
   }
 
   return removedPlayer;
+}
+
+function closeRoom(room) {
+  if (!room || rooms.get(room.code) !== room) {
+    return false;
+  }
+
+  rooms.delete(room.code);
+  room.hostReconnectToken = null;
+  room.hostDisconnectedAt = null;
+  room.players.forEach((player) => {
+    player.reconnectToken = null;
+    player.disconnectedAt = null;
+  });
+
+  [...room.clients].forEach((client) => {
+    if (client.readyState === 1) {
+      client.send(JSON.stringify({ type: 'room-closed' }));
+    }
+
+    client.roomCode = null;
+    client.playerId = null;
+    client.close();
+  });
+
+  room.clients.clear();
+  return true;
 }
 
 function startRound(room, customQuestion = '') {
@@ -645,7 +687,7 @@ wss.on('connection', (socket, request) => {
             socket.send(JSON.stringify({ type: 'error', code: 'AUTH_REQUIRED', message: 'Log in to create a room.' }));
             return;
           }
-          const roomData = createRoom({ hostName: message.name || 'Host', hostAccountId: socket.user.id, language: message.language });
+          const roomData = createRoom({ hostName: message.name || 'Host', hostAccountId: socket.user.id, language: message.language, hostAvatar: message.avatar });
           attachSocketToRoom(roomData, socket, roomData.hostId);
           sendRoomSession(socket, roomData, 'host', roomData.hostId, roomData.hostName, roomData.hostReconnectToken);
           socket.send(JSON.stringify({ type: 'room-state', state: makeRoomState(roomData) }));
@@ -659,7 +701,7 @@ wss.on('connection', (socket, request) => {
             return;
           }
 
-          const player = addPlayerToRoom(targetRoom, message.name || 'Guest');
+          const player = addPlayerToRoom(targetRoom, message.name || 'Guest', message.avatar);
           if (!player) {
             socket.send(JSON.stringify({ type: 'error', message: 'Duplicate player name or invalid input' }));
             return;
@@ -691,6 +733,15 @@ wss.on('connection', (socket, request) => {
               }
             });
           }
+          break;
+        }
+
+        case 'close-room': {
+          if (!room || room.hostId !== socket.playerId || room.hostAccountId !== socket.user?.id) {
+            return;
+          }
+
+          closeRoom(room);
           break;
         }
 
@@ -821,6 +872,7 @@ export {
   findPlayerById,
   addPlayerToRoom,
   leaveRoom,
+  closeRoom,
   calculateRoundScores,
   evaluateGuess,
   lockAnswers,
@@ -836,6 +888,8 @@ export {
   startRound,
   startNewGame,
   makeRoomState,
+  normalizeAvatar,
+  AVATAR_OPTIONS,
 };
 
 // Graceful shutdown for testing

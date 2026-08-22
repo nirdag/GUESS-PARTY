@@ -6,6 +6,7 @@
   "common.scorePts": "{value} נק'",
   "common.back": "חזרה",
   "common.quit": "עזוב",
+  "common.closeRoom": "סגור חדר",
 
   "welcome.eyebrow": "מסיבת ניחושים",
   "welcome.title": "מי כתב את התשובה?",
@@ -23,8 +24,20 @@
   "hostSetup.nameLabel": "שם התצוגה שלך",
   "hostSetup.namePlaceholder": "מנחה",
   "hostSetup.languageLabel": "שפת החדר",
+  "hostSetup.avatarLabel": "בחר את הדמות שלך",
   "hostSetup.submit": "צור חדר",
   "hostSetup.back": "חזרה",
+
+  "joinSetup.eyebrow": "הצטרפות לחדר",
+  "joinSetup.title": "הגדר את השחקן שלך",
+  "joinSetup.subtitle": "בחר שם תצוגה, קוד חדר ודמות.",
+  "joinSetup.nameLabel": "שם התצוגה שלך",
+  "joinSetup.namePlaceholder": "שחקן",
+  "joinSetup.roomCodeLabel": "קוד חדר",
+  "joinSetup.roomCodePlaceholder": "הזן את קוד החדר",
+  "joinSetup.avatarLabel": "בחר את הדמות שלך",
+  "joinSetup.submit": "הצטרף לחדר",
+  "joinSetup.back": "חזרה",
 
   "membership.eyebrow": "חברות מנחים",
   "membership.title": "הפוך למנחה",
@@ -144,6 +157,9 @@
   "prompts.defaultPlayerName": "שחקן",
   "prompts.defaultHostName": "מנחה",
   "prompts.confirmQuit": "האם אתה בטוח שברצונך לעזוב את החדר?",
+  "prompts.confirmCloseRoom": "לסגור את החדר? כל השחקנים ינותקו ולא ניתן יהיה לפתוח את החדר מחדש.",
+  "prompts.roomClosed": "המנחה סגר את החדר.",
+  "prompts.guessAlreadyLocked": "הניחוש שלך נעול ולא ניתן לשנות אותו.",
   "prompts.playerLeft": "{name} עזב את החדר.",
 
   "errors.AUTH_REQUIRED": "התחבר כדי ליצור חדר.",
