@@ -320,13 +320,19 @@ function closeRoom(room) {
   });
 
   [...room.clients].forEach((client) => {
-    if (client.readyState === 1) {
-      client.send(JSON.stringify({ type: 'room-closed' }));
-    }
-
     client.roomCode = null;
     client.playerId = null;
-    client.close();
+
+    if (client.readyState !== 1) {
+      client.close();
+      return;
+    }
+
+    // Wait for the send to actually flush before closing, otherwise close() can race ahead of it
+    // (e.g. under permessage-deflate/backpressure) and the client never sees the room-closed message.
+    client.send(JSON.stringify({ type: 'room-closed' }), () => {
+      client.close();
+    });
   });
 
   room.clients.clear();

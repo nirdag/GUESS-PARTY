@@ -513,8 +513,9 @@ describe('HIGH: Close Room', () => {
       readyState: 1,
       sent: [],
       closeCalls: 0,
-      send(message) {
+      send(message, callback) {
         this.sent.push(JSON.parse(message));
+        callback?.();
       },
       close() {
         this.closeCalls += 1;

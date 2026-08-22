@@ -169,7 +169,9 @@ let isRoomClosed = false
 // Vite dev server (5173) proxies nothing, so dev must reach the API/WS server on its own port.
 const DEV_API_PORT = '8080'
 
-const socket = new WebSocket(buildSocketUrl())
+// Reassigned by connectSocket(): the server closes this connection after room-closed/left-room,
+// so a fresh socket is needed for the next room rather than reusing the dead one.
+let socket: WebSocket
 
 function isViteDevServer(): boolean {
   return window.location.port === '5173'
@@ -579,6 +581,11 @@ function renderHostSetup(): void {
 
   root.querySelector<HTMLInputElement>('#host-setup-name')?.addEventListener('input', (event) => {
     state.playerName = (event.target as HTMLInputElement).value
+  })
+
+  // Track the pick so a later re-render (e.g. picking an avatar) doesn't revert the dropdown to English.
+  root.querySelector<HTMLSelectElement>('#host-setup-language')?.addEventListener('change', (event) => {
+    state.language = (event.target as HTMLSelectElement).value as LanguageCode
   })
 
   root.querySelector<HTMLFormElement>('#host-setup-form')?.addEventListener('submit', (event) => {
@@ -1206,6 +1213,11 @@ function renderGameEnd(): void {
 }
 
 function renderApp(): void {
+  // Screens outside an active room are never room-scoped, so they must not inherit a previous room's language.
+  if (state.screen === 'welcome' || state.screen === 'host-setup' || state.screen === 'join-setup') {
+    setLanguage('en')
+  }
+
   if (state.screen === 'welcome') {
     renderWelcome()
     return
@@ -1257,96 +1269,111 @@ function renderApp(): void {
   }
 }
 
-socket.addEventListener('open', () => {
-  if (shouldRestoreRoomSession && storedRoomSession) {
-    socket.send(JSON.stringify({
-      type: 'reconnect-room',
-      roomCode: storedRoomSession.roomCode,
-      role: storedRoomSession.role,
-      reconnectToken: storedRoomSession.reconnectToken,
-    }))
-    shouldRestoreRoomSession = false
-  }
+function connectSocket(): void {
+  socket = new WebSocket(buildSocketUrl())
 
-  if (queuedAction) {
-    const nextAction = queuedAction
-    queuedAction = null
-    nextAction()
-  }
-})
-
-socket.addEventListener('message', (event) => {
-  try {
-    const payload = JSON.parse(event.data)
-
-    if (payload.type === 'room-session') {
-      const session = payload.session as RoomSession
-      saveRoomSession(session)
-      state.roomCode = session.roomCode
-      state.role = session.role
-      state.currentPlayerId = session.playerId
-      state.playerName = session.playerName
-      return
-    }
-
-    if (payload.type === 'room-state') {
-      applyRoomState(payload.state)
-      return
-    }
-
-    if (payload.type === 'left-room') {
-      clearStoredRoomSession()
+  socket.addEventListener('open', () => {
+    if (shouldRestoreRoomSession && storedRoomSession) {
+      socket.send(JSON.stringify({
+        type: 'reconnect-room',
+        roomCode: storedRoomSession.roomCode,
+        role: storedRoomSession.role,
+        reconnectToken: storedRoomSession.reconnectToken,
+      }))
       shouldRestoreRoomSession = false
-      state.screen = 'welcome'
-      state.roomCode = ''
-      state.playerName = ''
-      state.currentPlayerId = ''
-      state.players = []
-      renderApp()
-      return
     }
 
-    if (payload.type === 'room-closed') {
-      isRoomClosed = true
-      clearStoredRoomSession()
-      shouldRestoreRoomSession = false
-      state.screen = 'welcome'
-      state.roomCode = ''
-      state.playerName = ''
-      state.currentPlayerId = ''
-      state.players = []
-      window.alert(t('prompts.roomClosed'))
-      renderApp()
-      return
+    if (queuedAction) {
+      const nextAction = queuedAction
+      queuedAction = null
+      nextAction()
     }
+  })
 
-    if (payload.type === 'player-left') {
-      window.alert(t('prompts.playerLeft', { name: payload.playerName }))
-      return
-    }
+  socket.addEventListener('message', (event) => {
+    try {
+      const payload = JSON.parse(event.data)
 
-    if (payload.type === 'error') {
-      if (payload.code === 'ROOM_SESSION_EXPIRED' || payload.code === 'ROOM_SESSION_INVALID') {
+      if (payload.type === 'room-session') {
+        const session = payload.session as RoomSession
+        saveRoomSession(session)
+        state.roomCode = session.roomCode
+        state.role = session.role
+        state.currentPlayerId = session.playerId
+        state.playerName = session.playerName
+        return
+      }
+
+      if (payload.type === 'room-state') {
+        applyRoomState(payload.state)
+        return
+      }
+
+      if (payload.type === 'left-room') {
         clearStoredRoomSession()
         shouldRestoreRoomSession = false
         state.screen = 'welcome'
         state.roomCode = ''
         state.playerName = ''
         state.currentPlayerId = ''
+        state.players = []
         renderApp()
+        return
       }
-      window.alert(payload.code ? t(`errors.${payload.code}`) : (payload.message || t('errors.default')))
-    }
-  } catch {
-    window.alert(t('prompts.invalidRoomData'))
-  }
-})
 
-socket.addEventListener('close', () => {
-  if (!isPageUnloading && !isRoomClosed) {
-    window.alert(t('prompts.connectionClosed'))
-  }
-})
+      if (payload.type === 'room-closed') {
+        isRoomClosed = true
+        clearStoredRoomSession()
+        shouldRestoreRoomSession = false
+        state.screen = 'welcome'
+        state.roomCode = ''
+        state.playerName = ''
+        state.currentPlayerId = ''
+        state.players = []
+        setLanguage('en')
+        window.alert(t('prompts.roomClosed'))
+        renderApp()
+        return
+      }
+
+      if (payload.type === 'player-left') {
+        window.alert(t('prompts.playerLeft', { name: payload.playerName }))
+        return
+      }
+
+      if (payload.type === 'error') {
+        if (payload.code === 'ROOM_SESSION_EXPIRED' || payload.code === 'ROOM_SESSION_INVALID') {
+          clearStoredRoomSession()
+          shouldRestoreRoomSession = false
+          state.screen = 'welcome'
+          state.roomCode = ''
+          state.playerName = ''
+          state.currentPlayerId = ''
+          renderApp()
+        }
+        window.alert(payload.code ? t(`errors.${payload.code}`) : (payload.message || t('errors.default')))
+      }
+    } catch {
+      window.alert(t('prompts.invalidRoomData'))
+    }
+  })
+
+  socket.addEventListener('close', () => {
+    if (!isPageUnloading && !isRoomClosed) {
+      window.alert(t('prompts.connectionClosed'))
+    }
+
+    isRoomClosed = false
+
+    // The server closes the socket after room-closed/left-room/expired-session; reconnect so the
+    // next create-room/join-room call has a live connection instead of silently queuing forever.
+    if (!isPageUnloading) {
+      setTimeout(connectSocket, 1000)
+    }
+  })
+}
+
+connectSocket()
 
 window.addEventListener('pagehide', () => {
   isPageUnloading = true
