@@ -99,6 +99,22 @@ function safePlayer(player) {
   };
 }
 
+// Every player is eligible except those whose submitted answer was already revealed (used up) in an earlier round.
+function getEligibleGuessTargetIds(room) {
+  const revealedAuthorIds = new Set(
+    room.answers
+      .map((answer) => answer.playerId)
+      .filter((playerId) => {
+        if (room.currentAnswer && playerId === room.currentAnswer.playerId) {
+          return false;
+        }
+        return !room.answerQueue.some((queued) => queued.playerId === playerId);
+      }),
+  );
+
+  return new Set(room.players.map((player) => player.id).filter((id) => !revealedAuthorIds.has(id)));
+}
+
 function makeRoomState(room) {
   return {
     code: room.code,
@@ -118,6 +134,7 @@ function makeRoomState(room) {
     language: room.language,
     guessTimeoutEnabled: room.guessTimeoutEnabled,
     guessDeadlineMs: room.guessDeadlineMs,
+    remainingAuthorIds: [...getEligibleGuessTargetIds(room)],
   };
 }
 
@@ -590,6 +607,11 @@ function evaluateGuess(room, guesserId, guessTargetId) {
     return;
   }
 
+  // Reject guesses against players already revealed as the correct answer in an earlier round.
+  if (!getEligibleGuessTargetIds(room).has(guessTargetId)) {
+    return;
+  }
+
   const existingGuess = room.guesses.find((entry) => entry.guesserId === guesserId);
   if (existingGuess) {
     return;
@@ -996,6 +1018,7 @@ export {
   startRound,
   startNewGame,
   makeRoomState,
+  getEligibleGuessTargetIds,
   normalizeAvatar,
   AVATAR_OPTIONS,
   armGuessTimeout,

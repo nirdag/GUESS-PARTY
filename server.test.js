@@ -18,6 +18,7 @@ import {
   startRound,
   startNewGame,
   makeRoomState,
+  getEligibleGuessTargetIds,
   normalizeAvatar,
   AVATAR_OPTIONS,
   armGuessTimeout,
@@ -721,6 +722,72 @@ describe('MEDIUM: Room Management', () => {
     const found = findPlayerById(room, 'nonexistent');
 
     expect(found).toBeUndefined();
+  });
+});
+
+describe('HIGH: Guess options shrink as authors get revealed', () => {
+  let room;
+
+  beforeEach(() => {
+    room = createTestRoom();
+    room.players = [createTestPlayer('p1', 'Alice'), createTestPlayer('p2', 'Bob'), createTestPlayer('p3', 'Charlie')];
+    room.answers = [
+      { playerId: 'p1', text: 'answer1', playerName: 'Alice' },
+      { playerId: 'p2', text: 'answer2', playerName: 'Bob' },
+      { playerId: 'p3', text: 'answer3', playerName: 'Charlie' },
+    ];
+  });
+
+  it('getEligibleGuessTargetIds includes remaining queue authors plus the current answer author', () => {
+    room.answerQueue = [
+      { playerId: 'p2', text: 'answer2', playerName: 'Bob' },
+      { playerId: 'p3', text: 'answer3', playerName: 'Charlie' },
+    ];
+    room.currentAnswer = { playerId: 'p1', text: 'answer1', playerName: 'Alice' };
+
+    expect(getEligibleGuessTargetIds(room)).toEqual(new Set(['p1', 'p2', 'p3']));
+  });
+
+  it('getEligibleGuessTargetIds excludes an author already revealed in a prior round', () => {
+    // p1's answer was drawn and resolved in an earlier round, so only p2/p3 remain queued.
+    room.answerQueue = [{ playerId: 'p3', text: 'answer3', playerName: 'Charlie' }];
+    room.currentAnswer = { playerId: 'p2', text: 'answer2', playerName: 'Bob' };
+
+    const eligible = getEligibleGuessTargetIds(room);
+
+    expect(eligible.has('p1')).toBe(false);
+    expect(eligible).toEqual(new Set(['p2', 'p3']));
+  });
+
+  it('makeRoomState exposes remainingAuthorIds for the client to filter guess options', () => {
+    room.answerQueue = [{ playerId: 'p3', text: 'answer3', playerName: 'Charlie' }];
+    room.currentAnswer = { playerId: 'p2', text: 'answer2', playerName: 'Bob' };
+
+    expect(makeRoomState(room).remainingAuthorIds.sort()).toEqual(['p2', 'p3']);
+  });
+
+  it('evaluateGuess rejects a guess targeting a player already revealed in a prior round', () => {
+    room.hostId = 'host-123';
+    room.phase = 'guessing';
+    // p1 was already revealed in a previous round, so p2/p3 shouldn't be able to guess them anymore.
+    room.answerQueue = [];
+    room.currentAnswer = { playerId: 'p3', text: 'answer3', playerName: 'Charlie' };
+
+    evaluateGuess(room, 'p2', 'p1');
+
+    expect(room.guesses).toHaveLength(0);
+  });
+
+  it('evaluateGuess still allows guessing the current round author', () => {
+    room.hostId = 'host-123';
+    room.phase = 'guessing';
+    room.answerQueue = [];
+    room.currentAnswer = { playerId: 'p3', text: 'answer3', playerName: 'Charlie' };
+
+    evaluateGuess(room, 'p2', 'p3');
+
+    expect(room.guesses).toHaveLength(1);
+    expect(room.guesses[0].guessedId).toBe('p3');
   });
 });
 

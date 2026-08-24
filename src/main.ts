@@ -58,6 +58,7 @@ type RoomState = {
   language: LanguageCode
   guessTimeoutEnabled: boolean
   guessDeadlineMs: number | null
+  remainingAuthorIds: string[]
 }
 
 const app = document.querySelector<HTMLDivElement>('#app')
@@ -164,6 +165,7 @@ const state = {
   enforceGuessTimeout: false,
   guessTimeoutEnabled: false,
   guessDeadlineMs: null as number | null,
+  remainingAuthorIds: [] as string[],
 }
 
 let queuedAction: (() => void) | null = null
@@ -294,6 +296,7 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   state.phase = serverState.phase ?? state.phase
   state.guessTimeoutEnabled = serverState.guessTimeoutEnabled ?? state.guessTimeoutEnabled
   state.guessDeadlineMs = serverState.guessDeadlineMs ?? null
+  state.remainingAuthorIds = serverState.remainingAuthorIds ?? state.remainingAuthorIds
   state.hasSubmittedAnswer = state.answers.some((answer) => answer.playerId === state.currentPlayerId)
 
   if (serverState.language) {
@@ -1077,7 +1080,8 @@ function renderPlayerAnswering(): void {
 }
 
 function renderPlayerGuessing(): void {
-  const guessOptions = state.players.filter((player) => player.id !== state.currentPlayerId)
+  // Players already revealed as a correct answer in an earlier round are no longer valid guesses.
+  const guessOptions = state.players.filter((player) => player.id !== state.currentPlayerId && state.remainingAuthorIds.includes(player.id))
   const selectedGuessId = state.selectedGuessId ?? state.guesses.find((entry) => entry.guesserId === state.currentPlayerId)?.guessedId ?? null
   const guessIsLocked = Boolean(selectedGuessId)
   const currentPlayer = getCurrentPlayer()
