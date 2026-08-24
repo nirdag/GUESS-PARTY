@@ -21,6 +21,10 @@ param monthlyBudgetAmount int = 25
 @description('Email address to notify when the budget threshold is hit.')
 param budgetAlertEmail string
 
+@description('Comma-separated admin emails granted access to the question gallery (set independently from the deployed code, so it is never overwritten by a redeploy).')
+@secure()
+param adminEmails string = ''
+
 @description('First day of the current month, used as the budget start date. Do not override.')
 param budgetStartDate string = utcNow('yyyy-MM-01')
 
@@ -105,6 +109,7 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'NODE_ENV', value: 'production' }
         { name: 'APP_ORIGIN', value: appOrigin }
         { name: 'GUESS_PARTY_DATA_DIR', value: '/home/data' }
+        { name: 'ADMIN_EMAILS', value: adminEmails }
         { name: 'ACS_CONNECTION_STRING', value: acs.listKeys().primaryConnectionString }
         // Azure-managed domain's actual sender address is only known after provisioning; deploy.ps1 sets this after the fact.
         { name: 'ACS_SENDER_ADDRESS', value: '' }

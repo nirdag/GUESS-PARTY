@@ -2,12 +2,18 @@ import './style.css'
 import { type LanguageCode, getLanguage, languages, setLanguage, t } from './i18n'
 
 type Role = 'host' | 'player'
-type Screen = 'welcome' | 'membership' | 'host-setup' | 'join-setup' | 'lobby' | 'host-managing' | 'player-answering' | 'player-guessing' | 'round-end' | 'game-end'
+type Screen = 'welcome' | 'membership' | 'host-setup' | 'join-setup' | 'lobby' | 'host-managing' | 'player-answering' | 'player-guessing' | 'round-end' | 'game-end' | 'admin-login' | 'admin-gallery'
 
 type Account = {
   id: string
   email: string
   emailVerified: boolean
+  isAdmin: boolean
+}
+
+type GalleryQuestion = {
+  id: string
+  text: string
 }
 
 type RoomSession = {
@@ -166,6 +172,11 @@ const state = {
   guessTimeoutEnabled: false,
   guessDeadlineMs: null as number | null,
   remainingAuthorIds: [] as string[],
+  adminError: '',
+  adminLanguageFilter: 'en' as LanguageCode,
+  adminQuestions: [] as GalleryQuestion[],
+  showQuestionGallery: false,
+  galleryQuestions: [] as GalleryQuestion[],
 }
 
 let queuedAction: (() => void) | null = null
@@ -563,6 +574,19 @@ function renderIdentityBanner(): string {
   `
 }
 
+function appendAccountBadge(): void {
+  if (!state.account) {
+    return
+  }
+
+  root.insertAdjacentHTML('beforeend', `
+    <div class="account-badge">
+      <span class="account-badge-label">${t('common.loggedInAs')}</span>
+      <strong>${state.account.email}</strong>
+    </div>
+  `)
+}
+
 function renderWelcome(): void {
   root.innerHTML = `
     <main class="shell">
@@ -583,6 +607,12 @@ function renderWelcome(): void {
             <strong>${t('welcome.joinRoom')}</strong>
             <small>${t('welcome.joinRoomHint')}</small>
           </button>
+
+          <button class="feature-card secondary" type="button" data-role="admin-login">
+            <span class="card-tag">${t('welcome.adminTag')}</span>
+            <strong>${t('welcome.adminLogin')}</strong>
+            <small>${t('welcome.adminLoginHint')}</small>
+          </button>
         </div>
       </section>
     </main>
@@ -597,6 +627,12 @@ function renderWelcome(): void {
   root.querySelector('[data-role="join-room"]')?.addEventListener('click', () => {
     state.selectedAvatar = AVATAR_OPTIONS[0]
     state.screen = 'join-setup'
+    renderApp()
+  })
+
+  root.querySelector('[data-role="admin-login"]')?.addEventListener('click', () => {
+    state.adminError = ''
+    state.screen = 'admin-login'
     renderApp()
   })
 }
@@ -790,6 +826,202 @@ function renderMembership(): void {
   })
 }
 
+async function fetchAdminQuestions(): Promise<void> {
+  try {
+    const response = await fetch(buildApiUrl(`/questions?language=${state.adminLanguageFilter}`), { credentials: 'include' })
+    const payload = await response.json()
+    state.adminQuestions = payload.questions ?? []
+  } catch {
+    state.adminQuestions = []
+  }
+}
+
+async function openQuestionGallery(): Promise<void> {
+  try {
+    const response = await fetch(buildApiUrl(`/questions?language=${state.language}`))
+    const payload = await response.json()
+    state.galleryQuestions = payload.questions ?? []
+  } catch {
+    state.galleryQuestions = []
+  }
+
+  state.showQuestionGallery = true
+  renderApp()
+}
+
+function renderAdminLogin(): void {
+  root.innerHTML = `
+    <main class="shell">
+      <section class="panel membership-panel">
+        <p class="eyebrow">${t('adminLogin.eyebrow')}</p>
+        <h1>${t('adminLogin.title')}</h1>
+        <p class="subtitle">${t('adminLogin.subtitle')}</p>
+
+        <form id="admin-login-form" class="membership-form">
+          <label for="admin-login-email">${t('adminLogin.emailLabel')}</label>
+          <input id="admin-login-email" type="email" autocomplete="email" required />
+          <label for="admin-login-password">${t('adminLogin.passwordLabel')}</label>
+          <input id="admin-login-password" type="password" autocomplete="current-password" required />
+          <p class="membership-error" data-role="admin-login-error" aria-live="polite">${state.adminError}</p>
+          <button class="primary-button" type="submit" data-role="admin-login-submit">${t('adminLogin.submit')}</button>
+        </form>
+
+        <div class="membership-actions">
+          <button class="ghost-button" type="button" data-role="admin-login-back">${t('adminLogin.back')}</button>
+        </div>
+      </section>
+    </main>
+  `
+
+  const form = root.querySelector<HTMLFormElement>('#admin-login-form')
+  const error = root.querySelector<HTMLElement>('[data-role="admin-login-error"]')
+  const submit = root.querySelector<HTMLButtonElement>('[data-role="admin-login-submit"]')
+
+  root.querySelector('[data-role="admin-login-back"]')?.addEventListener('click', () => {
+    state.screen = 'welcome'
+    renderApp()
+  })
+
+  form?.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const email = root.querySelector<HTMLInputElement>('#admin-login-email')?.value.trim() ?? ''
+    const password = root.querySelector<HTMLInputElement>('#admin-login-password')?.value ?? ''
+
+    submit!.disabled = true
+    error!.textContent = ''
+    try {
+      const loginResponse = await fetch(buildApiUrl('/auth/login'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      })
+      const loginPayload = await loginResponse.json()
+      if (!loginResponse.ok) {
+        error!.textContent = loginPayload.error || t('adminLogin.invalidError')
+        return
+      }
+
+      const sessionResponse = await fetch(buildApiUrl('/auth/session'), { credentials: 'include' })
+      const sessionPayload = await sessionResponse.json()
+      const account = sessionPayload.user as Account | null
+
+      if (!account?.isAdmin) {
+        error!.textContent = t('adminLogin.notAdminError')
+        return
+      }
+
+      state.account = account
+      state.adminLanguageFilter = 'en'
+      await fetchAdminQuestions()
+      state.screen = 'admin-gallery'
+      renderApp()
+    } catch {
+      error!.textContent = t('adminLogin.invalidError')
+    } finally {
+      submit!.disabled = false
+    }
+  })
+}
+
+function renderAdminGallery(): void {
+  const languageOptions = Object.values(languages)
+    .map((meta) => `<option value="${meta.code}" ${meta.code === state.adminLanguageFilter ? 'selected' : ''}>${t(`languages.${meta.code}`)}</option>`)
+    .join('')
+
+  root.innerHTML = `
+    <main class="shell">
+      <section class="panel membership-panel">
+        <p class="eyebrow">${t('adminGallery.eyebrow')}</p>
+        <h1>${t('adminGallery.title')}</h1>
+        <p class="subtitle">${t('adminGallery.subtitle')}</p>
+
+        <form id="admin-add-question-form" class="membership-form">
+          <label for="admin-add-language">${t('adminGallery.languageLabel')}</label>
+          <select id="admin-add-language">${languageOptions}</select>
+          <label for="admin-add-text">${t('adminGallery.questionTextLabel')}</label>
+          <textarea id="admin-add-text" rows="3" maxlength="220"></textarea>
+          <p class="membership-error" data-role="admin-add-error" aria-live="polite"></p>
+          <button class="primary-button" type="submit">${t('adminGallery.addButton')}</button>
+        </form>
+
+        <div class="section-head">
+          <h2>${t('adminGallery.languageLabel')}</h2>
+          <select id="admin-filter-language">${languageOptions}</select>
+        </div>
+
+        <div class="result-list">
+          ${state.adminQuestions.length > 0
+            ? state.adminQuestions
+                .map(
+                  (question) => `
+                    <div class="result-row">
+                      <span>${question.text}</span>
+                      <button class="ghost-button" type="button" data-role="admin-delete-question" data-question-id="${question.id}">${t('adminGallery.deleteButton')}</button>
+                    </div>
+                  `,
+                )
+                .join('')
+            : `<div class="result-row"><span>${t('adminGallery.emptyState')}</span></div>`}
+        </div>
+
+        <div class="membership-actions">
+          <button class="ghost-button" type="button" data-role="admin-gallery-back">${t('adminGallery.back')}</button>
+        </div>
+      </section>
+    </main>
+  `
+
+  root.querySelector('[data-role="admin-gallery-back"]')?.addEventListener('click', () => {
+    state.screen = 'welcome'
+    renderApp()
+  })
+
+  root.querySelector<HTMLSelectElement>('#admin-filter-language')?.addEventListener('change', (event) => {
+    state.adminLanguageFilter = (event.target as HTMLSelectElement).value as LanguageCode
+    void fetchAdminQuestions().then(renderApp)
+  })
+
+  root.querySelectorAll<HTMLButtonElement>('[data-role="admin-delete-question"]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const questionId = button.dataset.questionId ?? ''
+      await fetch(buildApiUrl(`/admin/questions/${questionId}`), { method: 'DELETE', credentials: 'include' })
+      await fetchAdminQuestions()
+      renderApp()
+    })
+  })
+
+  const addForm = root.querySelector<HTMLFormElement>('#admin-add-question-form')
+  const addError = root.querySelector<HTMLElement>('[data-role="admin-add-error"]')
+
+  addForm?.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const language = root.querySelector<HTMLSelectElement>('#admin-add-language')?.value ?? 'en'
+    const text = root.querySelector<HTMLTextAreaElement>('#admin-add-text')?.value.trim() ?? ''
+
+    addError!.textContent = ''
+    try {
+      const response = await fetch(buildApiUrl('/admin/questions'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ language, text }),
+      })
+      const payload = await response.json()
+      if (!response.ok) {
+        addError!.textContent = payload.error || t('adminGallery.addButton')
+        return
+      }
+
+      state.adminLanguageFilter = language as LanguageCode
+      await fetchAdminQuestions()
+      renderApp()
+    } catch {
+      addError!.textContent = t('adminGallery.addButton')
+    }
+  })
+}
+
 function renderLobby(): void {
   const leaderboard = [...state.players].sort((a, b) => b.score - a.score)
   const hostQuestionIsValid = state.customQuestion.trim().length >= 8
@@ -847,8 +1079,32 @@ function renderLobby(): void {
               <div class="host-question-actions">
                 <button class="secondary-button" type="submit">${t('lobby.saveQuestion')}</button>
                 <button class="ghost-button" type="button" data-role="clear-question">${t('lobby.clear')}</button>
+                <button class="ghost-button" type="button" data-role="browse-gallery">${t('lobby.browseGallery')}</button>
               </div>
             </form>
+
+            ${state.showQuestionGallery
+              ? `
+                <div class="result-list">
+                  <div class="section-head">
+                    <h2>${t('lobby.galleryTitle')}</h2>
+                    <button class="ghost-button" type="button" data-role="close-gallery">${t('lobby.galleryClose')}</button>
+                  </div>
+                  ${state.galleryQuestions.length > 0
+                    ? state.galleryQuestions
+                        .map(
+                          (question) => `
+                            <button type="button" class="result-row" data-role="select-gallery-question" data-question-text="${question.text.replace(/"/g, '&quot;')}">
+                              <span>${question.text}</span>
+                              <strong>${t('lobby.gallerySelect')}</strong>
+                            </button>
+                          `,
+                        )
+                        .join('')
+                    : `<div class="result-row"><span>${t('lobby.galleryEmpty')}</span></div>`}
+                </div>
+                `
+              : ''}
 
             <div class="rules-list">
               <div class="rule-item"><strong>1.</strong><span>${t('lobby.hostRule1')}</span></div>
@@ -915,6 +1171,23 @@ function renderLobby(): void {
 
     state.customQuestion = value
     renderApp()
+  })
+
+  root.querySelector('[data-role="browse-gallery"]')?.addEventListener('click', () => {
+    void openQuestionGallery()
+  })
+
+  root.querySelector('[data-role="close-gallery"]')?.addEventListener('click', () => {
+    state.showQuestionGallery = false
+    renderApp()
+  })
+
+  root.querySelectorAll<HTMLButtonElement>('[data-role="select-gallery-question"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.customQuestion = button.dataset.questionText ?? ''
+      state.showQuestionGallery = false
+      renderApp()
+    })
   })
 }
 
@@ -1277,27 +1550,43 @@ function renderGameEnd(): void {
 
 function renderApp(): void {
   // Screens outside an active room are never room-scoped, so they must not inherit a previous room's language.
-  if (state.screen === 'welcome' || state.screen === 'host-setup' || state.screen === 'join-setup') {
+  if (state.screen === 'welcome' || state.screen === 'host-setup' || state.screen === 'join-setup' || state.screen === 'admin-login' || state.screen === 'admin-gallery') {
     setLanguage('en')
   }
 
   if (state.screen === 'welcome') {
     renderWelcome()
+    appendAccountBadge()
     return
   }
 
   if (state.screen === 'membership') {
     renderMembership()
+    appendAccountBadge()
+    return
+  }
+
+  if (state.screen === 'admin-login') {
+    renderAdminLogin()
+    appendAccountBadge()
+    return
+  }
+
+  if (state.screen === 'admin-gallery') {
+    renderAdminGallery()
+    appendAccountBadge()
     return
   }
 
   if (state.screen === 'host-setup') {
     renderHostSetup()
+    appendAccountBadge()
     return
   }
 
   if (state.screen === 'join-setup') {
     renderJoinSetup()
+    appendAccountBadge()
     return
   }
 

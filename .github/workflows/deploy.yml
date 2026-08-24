@@ -31,7 +31,7 @@ jobs:
         run: |
           rm -rf deploy
           mkdir deploy
-          cp -r dist server.js auth.js emailService.js logger.js package.json package-lock.json deploy/
+          cp -r dist server.js auth.js admins.js questions.js emailService.js logger.js package.json package-lock.json deploy/
           cd deploy && npm ci --omit=dev
 
       - name: Log in to Azure

@@ -8,6 +8,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { createAuthService } from './auth.js';
+import { isAdminEmail } from './admins.js';
+import { createQuestionService } from './questions.js';
 import { sendVerificationEmail } from './emailService.js';
 import { logger } from './logger.js';
 
@@ -41,6 +43,7 @@ const authService = createAuthService({
       });
   },
 });
+const questionService = createQuestionService();
 
 process.on('uncaughtException', (error) => {
   logger.error('uncaught-exception', { error });
@@ -716,7 +719,41 @@ app.post('/auth/logout', (req, res) => {
 });
 
 app.get('/auth/session', (req, res) => {
-  res.json({ user: requestUser(req) });
+  const user = requestUser(req);
+  res.json({ user: user ? { ...user, isAdmin: isAdminEmail(user.email) } : null });
+});
+
+function requireAdmin(req, res, next) {
+  const user = requestUser(req);
+  if (!user || !isAdminEmail(user.email)) {
+    res.status(403).json({ error: 'Admin access required.' });
+    return;
+  }
+  next();
+}
+
+app.get('/questions', (req, res) => {
+  res.json({ questions: questionService.listQuestions(normalizeLanguage(req.query.language)) });
+});
+
+app.post('/admin/questions', requireAdmin, (req, res) => {
+  const result = questionService.addQuestion(req.body?.language, req.body?.text);
+  if (result.error) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  logger.event('admin-question-added', { language: req.body?.language });
+  res.status(201).json({ question: result.question });
+});
+
+app.delete('/admin/questions/:id', requireAdmin, (req, res) => {
+  const deleted = questionService.deleteQuestion(req.params.id);
+  if (!deleted) {
+    res.status(404).json({ error: 'Question not found.' });
+    return;
+  }
+  logger.event('admin-question-deleted', { id: req.params.id });
+  res.status(204).end();
 });
 
 app.post('/auth/verify-email', (req, res) => {

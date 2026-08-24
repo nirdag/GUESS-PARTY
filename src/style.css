@@ -95,6 +95,30 @@ button {
   padding: 5px 12px;
 }
 
+.account-badge {
+  position: fixed;
+  bottom: 14px;
+  inset-inline-end: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: rgba(23, 31, 59, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 6px 18px var(--shadow);
+  font-size: 12px;
+  z-index: 20;
+}
+
+.account-badge .account-badge-label {
+  color: var(--muted);
+}
+
+.account-badge strong {
+  overflow-wrap: anywhere;
+}
+
 .guess-card.locked:not(.selected) {
   opacity: 0.65;
 }
