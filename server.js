@@ -292,6 +292,8 @@ function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvata
     guessTimeoutEnabled: Boolean(enforceGuessTimeout),
     guessDeadlineMs: null,
     guessTimeoutHandle: null,
+    gameStartedAt: null,
+    questionsPlayedThisGame: 0,
   };
 
   rooms.set(code, room);
@@ -374,6 +376,7 @@ function closeRoom(room) {
     return false;
   }
 
+  emitGameEndedIfInProgress(room);
   clearGuessTimeout(room);
   rooms.delete(room.code);
   room.hostReconnectToken = null;
@@ -411,6 +414,12 @@ function startRound(room, customQuestion = '') {
   const trimmedQuestion = (customQuestion || '').trim();
   const selectedQuestion = trimmedQuestion || questionBank[Math.floor(Math.random() * questionBank.length)];
 
+  if (room.phase === 'lobby') {
+    room.gameStartedAt = Date.now();
+    room.questionsPlayedThisGame = 0;
+    logger.event('game-started', { roomCode: room.code, participantCount: room.players.length });
+  }
+  room.questionsPlayedThisGame += 1;
   room.answerRoundNumber = 1;
   room.phase = 'answer-collection';
   room.question = selectedQuestion;
@@ -433,6 +442,7 @@ function startRound(room, customQuestion = '') {
 }
 
 function startNewGame(room) {
+  emitGameEndedIfInProgress(room);
   room.phase = 'lobby';
   room.answerRoundNumber = 0;
   room.question = '';
@@ -451,6 +461,21 @@ function startNewGame(room) {
   broadcastRoom(room);
 }
 
+// Fires once per game regardless of which of the 3 end triggers (game-end/new-game/close-room) hits first.
+function emitGameEndedIfInProgress(room) {
+  if (!room.gameStartedAt) {
+    return;
+  }
+
+  logger.event('game-ended', {
+    roomCode: room.code,
+    durationMs: Date.now() - room.gameStartedAt,
+    participantCount: room.players.length,
+    questionsPlayed: room.questionsPlayedThisGame,
+  });
+  room.gameStartedAt = null;
+}
+
 function prepareCurrentAnswer(room) {
   if (room.answerQueue.length === 0) {
     room.currentAnswer = null;
@@ -459,6 +484,7 @@ function prepareCurrentAnswer(room) {
     room.answerAuthorId = null;
     room.selectedAnswer = '';
     clearGuessTimeout(room);
+    emitGameEndedIfInProgress(room);
     broadcastRoom(room);
     return;
   }
@@ -844,7 +870,7 @@ wss.on('connection', (socket, request) => {
           attachSocketToRoom(roomData, socket, roomData.hostId);
           sendRoomSession(socket, roomData, 'host', roomData.hostId, roomData.hostName, roomData.hostReconnectToken);
           socket.send(JSON.stringify({ type: 'room-state', state: makeRoomState(roomData) }));
-          logger.event('room-created', { roomCode: roomData.code });
+          logger.event('room-created', { roomCode: roomData.code, language: roomData.language });
           break;
         }
 
@@ -1022,8 +1048,10 @@ membershipCleanup.unref();
 
 const activityMetrics = setInterval(() => {
   const totalPlayers = [...rooms.values()].reduce((sum, room) => sum + room.players.length, 0);
+  const gamesInProgress = [...rooms.values()].filter((room) => room.gameStartedAt).length;
   appInsights.defaultClient?.trackMetric({ name: 'active-rooms', value: rooms.size });
   appInsights.defaultClient?.trackMetric({ name: 'connected-players', value: totalPlayers });
+  appInsights.defaultClient?.trackMetric({ name: 'games-in-progress', value: gamesInProgress });
 }, 60 * 1000);
 activityMetrics.unref();
 
@@ -1054,6 +1082,7 @@ export {
   reconnectGracePeriodMs,
   startRound,
   startNewGame,
+  emitGameEndedIfInProgress,
   makeRoomState,
   getEligibleGuessTargetIds,
   normalizeAvatar,

@@ -54,6 +54,82 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   }
 }
 
+// Pre-built dashboard for room/game lifecycle metrics + a world map of traffic by region
+// (region comes from App Insights' own request geo-enrichment, no custom IP capture needed).
+// Workbook name must be a GUID; deterministic per resource group so redeploys update it in place.
+resource metricsWorkbook 'Microsoft.Insights/workbooks@2022-04-01' = {
+  name: guid(resourceGroup().id, '${appName}-metrics-workbook')
+  location: location
+  kind: 'shared'
+  properties: {
+    displayName: '${appName} metrics'
+    category: 'workbook'
+    sourceId: appInsights.id
+    serializedData: '''
+{
+  "version": "Notebook/1.0",
+  "items": [
+    { "type": 1, "content": { "json": "## Guess Party — rooms, games & traffic" } },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customEvents\n| where name == 'room-created'\n| summarize Rooms = count() by bin(timestamp, 1d), Language = tostring(customDimensions.language)\n| order by timestamp asc",
+        "size": 0,
+        "visualization": "barchart"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customEvents\n| where name in ('game-started', 'game-ended')\n| summarize Count = count() by name, bin(timestamp, 1d)\n| order by timestamp asc",
+        "size": 0,
+        "visualization": "linechart"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customEvents\n| where name == 'game-ended'\n| summarize AvgDurationSec = avg(todouble(customDimensions.durationMs)) / 1000, AvgParticipants = avg(todouble(customDimensions.participantCount)), AvgQuestions = avg(todouble(customDimensions.questionsPlayed))",
+        "size": 0,
+        "visualization": "table"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customMetrics\n| where name in ('active-rooms', 'connected-players', 'games-in-progress')\n| summarize Value = avg(value) by name, bin(timestamp, 5m)\n| order by timestamp asc",
+        "size": 0,
+        "visualization": "linechart"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "requests\n| where client_CountryOrRegion != ''\n| summarize Requests = count() by client_CountryOrRegion",
+        "size": 0,
+        "visualization": "map",
+        "mapSettings": {
+          "locInfo": "CountryRegion",
+          "locInfoColumn": "client_CountryOrRegion",
+          "sizeSettings": "Requests",
+          "sizeAggregation": "Sum",
+          "legendMetric": "Requests",
+          "legendAggregation": "Sum"
+        }
+      }
+    }
+  ],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}
+'''
+  }
+}
+
 resource emailService 'Microsoft.Communication/emailServices@2023-04-01' = {
   name: emailServiceName
   location: 'global'

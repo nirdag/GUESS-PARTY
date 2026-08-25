@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { logger } from './logger.js';
 import {
   findPlayerById,
   addPlayerToRoom,
@@ -17,6 +18,7 @@ import {
   reconnectGracePeriodMs,
   startRound,
   startNewGame,
+  emitGameEndedIfInProgress,
   makeRoomState,
   getEligibleGuessTargetIds,
   normalizeAvatar,
@@ -50,6 +52,8 @@ function createTestRoom() {
     guessTimeoutEnabled: false,
     guessDeadlineMs: null,
     guessTimeoutHandle: null,
+    gameStartedAt: null,
+    questionsPlayedThisGame: 0,
   };
 }
 
@@ -487,6 +491,77 @@ describe('CRITICAL: Start New Game', () => {
     expect(room.phase).toBe('answer-collection');
     expect(room.question).toBe('Brand new question here');
     expect(player1.score).toBe(360);
+  });
+});
+
+describe('MEDIUM: Game lifecycle metrics', () => {
+  let room;
+
+  beforeEach(() => {
+    room = createTestRoom();
+    room.players = [createTestPlayer('p1', 'Alice'), createTestPlayer('p2', 'Bob')];
+    vi.spyOn(logger, 'event').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('startRound emits game-started only for the first question of a game', () => {
+    startRound(room, 'Question one');
+
+    expect(logger.event).toHaveBeenCalledWith('game-started', { roomCode: room.code, participantCount: 2 });
+    expect(room.gameStartedAt).not.toBeNull();
+    expect(room.questionsPlayedThisGame).toBe(1);
+
+    logger.event.mockClear();
+    startRound(room, 'Question two');
+
+    expect(logger.event).not.toHaveBeenCalledWith('game-started', expect.anything());
+    expect(room.questionsPlayedThisGame).toBe(2);
+  });
+
+  it('emitGameEndedIfInProgress does nothing when no game is in progress', () => {
+    emitGameEndedIfInProgress(room);
+
+    expect(logger.event).not.toHaveBeenCalledWith('game-ended', expect.anything());
+  });
+
+  it('prepareCurrentAnswer emits game-ended with duration/participants/questions when the queue is exhausted', () => {
+    startRound(room, 'Question one');
+    room.answerQueue = [];
+
+    prepareCurrentAnswer(room);
+
+    expect(logger.event).toHaveBeenCalledWith('game-ended', expect.objectContaining({
+      roomCode: room.code,
+      participantCount: 2,
+      questionsPlayed: 1,
+    }));
+    expect(room.gameStartedAt).toBeNull();
+  });
+
+  it('closeRoom emits game-ended exactly once even if the game already ended naturally', () => {
+    startRound(room, 'Question one');
+    room.answerQueue = [];
+    prepareCurrentAnswer(room);
+
+    logger.event.mockClear();
+    closeRoom(room);
+
+    expect(logger.event).not.toHaveBeenCalledWith('game-ended', expect.anything());
+  });
+
+  it('startNewGame emits game-ended for a game closed early by the host', () => {
+    startRound(room, 'Question one');
+
+    startNewGame(room);
+
+    expect(logger.event).toHaveBeenCalledWith('game-ended', expect.objectContaining({
+      roomCode: room.code,
+      questionsPlayed: 1,
+    }));
+    expect(room.gameStartedAt).toBeNull();
   });
 });
 
