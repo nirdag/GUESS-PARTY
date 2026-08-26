@@ -86,7 +86,7 @@
   "lobby.playerRule1": "Wait for the host to provide a question.",
   "lobby.playerRule2": "Answer the question, then wait for everyone else to submit their answers.",
   "lobby.playerRule3": "Each person tries to guess who wrote each answer.",
-  "lobby.playerRule4": "Correct guesses earn 120 points each.",
+  "lobby.playerRule4": "The faster you guess correctly, the more points you earn (up to 120).",
   "lobby.leaderboard": "Leaderboard",
   "lobby.browseGallery": "Browse question gallery",
   "lobby.galleryTitle": "Predefined questions",

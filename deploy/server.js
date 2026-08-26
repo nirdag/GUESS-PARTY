@@ -63,6 +63,8 @@ const rooms = new Map();
 const reconnectGracePeriodMs = 30 * 60 * 1000;
 const supportedLanguages = new Set(['en', 'he']);
 const GUESS_TIMEOUT_SECONDS = 20;
+// Points for a correct guess by arrival order (1st correct guess, 2nd, ...); last value is the floor for the rest.
+const SPEED_TIERS = [120, 100, 80, 60, 40];
 // Fixed allow-list: never trust arbitrary client-supplied avatar strings.
 const AVATAR_OPTIONS = [
   '🦊', '🐸', '🐧', '🐼', '🐨', '🦁', '🐵', '🐯',
@@ -493,10 +495,16 @@ function calculateRoundScores(room) {
   const answerEntry = room.currentAnswer;
   const correctPlayerId = answerEntry.playerId;
 
+  let correctRank = 0;
   room.roundResults = room.guesses.map((guess) => {
     const guesser = findPlayerById(room, guess.guesserId);
     const isCorrect = guess.guessedId === correctPlayerId;
-    const points = isCorrect ? 120 : 0;
+    let points = 0;
+
+    if (isCorrect) {
+      points = SPEED_TIERS[Math.min(correctRank, SPEED_TIERS.length - 1)];
+      correctRank += 1;
+    }
 
     if (guesser && isCorrect) {
       guesser.score += points;

@@ -132,6 +132,68 @@ describe('CRITICAL: Scoring Logic', () => {
     expect(room.roundResults).toHaveLength(2);
   });
 
+  it('calculateRoundScores awards decreasing points to later correct guessers in the same round', () => {
+    const player1 = createTestPlayer('p1', 'Alice');
+    const player2 = createTestPlayer('p2', 'Bob');
+    const player3 = createTestPlayer('p3', 'Charlie');
+    const player4 = createTestPlayer('p4', 'Dana');
+    room.players = [player1, player2, player3, player4];
+
+    room.answerQueue = [{ playerId: 'p1', text: 'test answer', playerName: 'Alice' }];
+    room.currentAnswer = room.answerQueue[0];
+    room.phase = 'guessing';
+    room.guesses = [
+      { guesserId: 'p2', guesserName: 'Bob', guessedId: 'p1', guessedName: 'Alice' },
+      { guesserId: 'p3', guesserName: 'Charlie', guessedId: 'p1', guessedName: 'Alice' },
+      { guesserId: 'p4', guesserName: 'Dana', guessedId: 'p1', guessedName: 'Alice' },
+    ];
+
+    calculateRoundScores(room);
+
+    expect(room.roundResults.map((result) => result.points)).toEqual([120, 100, 80]);
+    expect(player2.score).toBe(120);
+    expect(player3.score).toBe(100);
+    expect(player4.score).toBe(80);
+  });
+
+  it('calculateRoundScores floors points at the last speed tier once guessers run out of tiers', () => {
+    const players = ['p2', 'p3', 'p4', 'p5', 'p6', 'p7'].map((id, index) => createTestPlayer(id, `Player${index}`));
+    room.players = [createTestPlayer('p1', 'Alice'), ...players];
+
+    room.answerQueue = [{ playerId: 'p1', text: 'test answer', playerName: 'Alice' }];
+    room.currentAnswer = room.answerQueue[0];
+    room.phase = 'guessing';
+    room.guesses = players.map((player) => ({
+      guesserId: player.id,
+      guesserName: player.name,
+      guessedId: 'p1',
+      guessedName: 'Alice',
+    }));
+
+    calculateRoundScores(room);
+
+    expect(room.roundResults.map((result) => result.points)).toEqual([120, 100, 80, 60, 40, 40]);
+  });
+
+  it('calculateRoundScores does not consume a speed tier for incorrect guesses', () => {
+    const player1 = createTestPlayer('p1', 'Alice');
+    const player2 = createTestPlayer('p2', 'Bob');
+    const player3 = createTestPlayer('p3', 'Charlie');
+    room.players = [player1, player2, player3];
+
+    room.answerQueue = [{ playerId: 'p1', text: 'test answer', playerName: 'Alice' }];
+    room.currentAnswer = room.answerQueue[0];
+    room.phase = 'guessing';
+    room.guesses = [
+      { guesserId: 'p2', guesserName: 'Bob', guessedId: 'p3', guessedName: 'Charlie' },
+      { guesserId: 'p3', guesserName: 'Charlie', guessedId: 'p1', guessedName: 'Alice' },
+    ];
+
+    calculateRoundScores(room);
+
+    expect(room.roundResults.map((result) => result.points)).toEqual([0, 120]);
+  });
+
   it('calculateRoundScores transitions to round-end phase', () => {
     const player1 = createTestPlayer('p1', 'Alice');
     room.players = [player1];
