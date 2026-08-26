@@ -57,7 +57,19 @@ function validateCredentials(email, password) {
   return null;
 }
 
-function createAuthService({ sendVerificationEmail = () => {}, now = () => Date.now() } = {}) {
+function createAuthService({ sendVerificationEmail = () => {}, onAccountStatsChanged = () => {}, now = () => Date.now() } = {}) {
+  function getAccountStats() {
+    const store = readStore();
+    return {
+      totalAccounts: store.users.length,
+      verifiedAccounts: store.users.filter((user) => user.emailVerified).length,
+    };
+  }
+
+  function publishAccountStats() {
+    onAccountStatsChanged(getAccountStats());
+  }
+
   function signUp(email, password) {
     const normalizedEmail = normalizeEmail(email);
     const validationError = validateCredentials(normalizedEmail, password);
@@ -79,6 +91,7 @@ function createAuthService({ sendVerificationEmail = () => {}, now = () => Date.
     store.users.push(user);
     store.verificationTokens.push({ userId: user.id, tokenHash: hashToken(token), expiresAt: now() + verificationLifetimeMs });
     writeStore(store);
+    publishAccountStats();
     sendVerificationEmail({ email: user.email, token });
     return { user: publicUser(user) };
   }
@@ -113,6 +126,7 @@ function createAuthService({ sendVerificationEmail = () => {}, now = () => Date.
     user.emailVerified = true;
     store.verificationTokens = store.verificationTokens.filter((item) => item !== entry);
     writeStore(store);
+    publishAccountStats();
     return true;
   }
 
@@ -122,7 +136,7 @@ function createAuthService({ sendVerificationEmail = () => {}, now = () => Date.
     writeStore(store);
   }
 
-  return { signUp, login, getUserBySession, verifyEmail, logout, publicUser };
+  return { signUp, login, getUserBySession, verifyEmail, logout, getAccountStats, publicUser };
 }
 
 export { createAuthService, normalizeEmail, validateCredentials };

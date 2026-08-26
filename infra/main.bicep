@@ -110,6 +110,24 @@ resource metricsWorkbook 'Microsoft.Insights/workbooks@2022-04-01' = {
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
+        "query": "customMetrics\n| where name in ('registered-accounts', 'verified-accounts')\n| summarize Value = max(value) by name\n| order by name asc",
+        "size": 0,
+        "visualization": "table"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "customMetrics\n| where name in ('registered-accounts', 'verified-accounts')\n| summarize Value = max(value) by name, bin(timestamp, 1d)\n| order by timestamp asc",
+        "size": 0,
+        "visualization": "linechart"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
         "query": "requests\n| where client_CountryOrRegion != ''\n| summarize Requests = count() by client_CountryOrRegion",
         "size": 0,
         "visualization": "map",

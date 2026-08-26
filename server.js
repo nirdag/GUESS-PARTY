@@ -29,6 +29,10 @@ const isProduction = process.env.NODE_ENV === 'production';
 const appOrigin = process.env.APP_ORIGIN || 'http://localhost:5173';
 const sessionCookieName = 'guess_party_session';
 const authService = createAuthService({
+  onAccountStatsChanged: ({ totalAccounts, verifiedAccounts }) => {
+    logger.metric('registered-accounts', totalAccounts);
+    logger.metric('verified-accounts', verifiedAccounts);
+  },
   sendVerificationEmail: ({ email, token }) => {
     const link = `${appOrigin}/?verify=${encodeURIComponent(token)}`;
 
@@ -43,6 +47,9 @@ const authService = createAuthService({
       });
   },
 });
+const initialAccountStats = authService.getAccountStats();
+logger.metric('registered-accounts', initialAccountStats.totalAccounts);
+logger.metric('verified-accounts', initialAccountStats.verifiedAccounts);
 const questionService = createQuestionService();
 
 process.on('uncaughtException', (error) => {

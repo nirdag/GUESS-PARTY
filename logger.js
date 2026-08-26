@@ -51,6 +51,9 @@ export const logger = {
   info: (event, data = {}) => write('info', event, data),
   warn: (event, data = {}) => write('warn', event, data),
   error: (event, data = {}) => write('error', event, data),
+  metric: (name, value) => {
+    appInsights.defaultClient?.trackMetric({ name, value });
+  },
   // Distinct App Insights "customEvents" stream for room/game lifecycle milestones.
   event: (name, data = {}) => {
     const safeData = sanitize(data);
