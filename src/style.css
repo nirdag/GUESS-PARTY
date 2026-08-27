@@ -453,7 +453,7 @@ h1 {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: #7c9cff;
+  background: transparent;
   display: inline-flex;
   align-items: center;
   justify-content: center;
