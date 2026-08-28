@@ -187,6 +187,7 @@
   "prompts.verifyLater": "לא ניתן היה לאמת את האימייל שלך כרגע. נסה שוב את הקישור מאוחר יותר.",
   "prompts.somethingWentWrong": "משהו השתבש.",
   "prompts.invalidRoomData": "חיבור החדר שלח נתונים שגויים.",
+  "prompts.reconnecting": "מתחבר מחדש...",
   "prompts.connectionClosed": "החיבור לשרת המשחק נסגר. רענן את הדף כדי להתחבר מחדש.",
   "prompts.defaultPlayerName": "שחקן",
   "prompts.defaultHostName": "מנחה",

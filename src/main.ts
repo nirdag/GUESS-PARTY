@@ -181,7 +181,9 @@ const state = {
 let queuedAction: (() => void) | null = null
 let shouldRestoreRoomSession = Boolean(storedRoomSession)
 let isPageUnloading = false
-let isRoomClosed = false
+let reconnectAttempt = 0
+let reconnectTimer: number | null = null
+let reconnectAlertShown = false
 
 // Vite dev server (5173) proxies nothing, so dev must reach the API/WS server on its own port.
 const DEV_API_PORT = '8080'
@@ -210,6 +212,32 @@ function buildApiUrl(path: string): string {
   }
 
   return `${window.location.protocol}//${window.location.hostname || 'localhost'}:${DEV_API_PORT}${path}`
+}
+
+function isActiveRoomScreen(): boolean {
+  return ['lobby', 'host-managing', 'player-answering', 'player-guessing', 'round-end', 'game-end'].includes(state.screen)
+}
+
+function updateConnectionStatus(isReconnecting: boolean): void {
+  const status = root.querySelector<HTMLElement>('[data-role="connection-status"]')
+  if (!status) {
+    return
+  }
+
+  status.hidden = !isReconnecting
+  status.textContent = isReconnecting ? t('prompts.reconnecting') : ''
+}
+
+function scheduleSocketReconnect(): void {
+  if (isPageUnloading || reconnectTimer !== null) {
+    return
+  }
+
+  const delay = Math.min(10000, 1000 * (2 ** Math.min(reconnectAttempt - 1, 3)))
+  reconnectTimer = window.setTimeout(() => {
+    reconnectTimer = null
+    connectSocket()
+  }, delay)
 }
 
 function formatScore(value: number): string {
@@ -388,7 +416,6 @@ function createRoomSession(name: string, language: LanguageCode, avatar: string,
   state.language = language
   state.myAvatar = avatar
   state.guessTimeoutSeconds = guessTimeoutSeconds
-  isRoomClosed = false
   setLanguage(language)
   shouldRestoreRoomSession = false
   clearStoredRoomSession()
@@ -438,7 +465,6 @@ function joinRoomSession(name: string, roomCode: string, avatar: string): void {
   state.role = 'player'
   state.roomCode = nextRoomCode
   state.myAvatar = avatar
-  isRoomClosed = false
   shouldRestoreRoomSession = false
   clearStoredRoomSession()
 
@@ -566,6 +592,7 @@ function renderIdentityBanner(): string {
       <span class="identity-label">${t('common.playingAs')}</span>
       <strong>${displayName}</strong>
       <span class="identity-role">${roleLabel}</span>
+      <span class="connection-status" data-role="connection-status" role="status" aria-live="polite" hidden></span>
       ${state.role === 'host'
         ? `<button class="quit-button" type="button" data-role="close-room">${t('common.closeRoom')}</button>`
         : `<button class="quit-button" type="button" data-role="quit-room">${t('common.quit')}</button>`}
@@ -1637,6 +1664,10 @@ function connectSocket(): void {
   socket = new WebSocket(buildSocketUrl())
 
   socket.addEventListener('open', () => {
+    reconnectAttempt = 0
+    reconnectAlertShown = false
+    updateConnectionStatus(false)
+
     if (shouldRestoreRoomSession && storedRoomSession) {
       socket.send(JSON.stringify({
         type: 'reconnect-room',
@@ -1686,7 +1717,6 @@ function connectSocket(): void {
       }
 
       if (payload.type === 'room-closed') {
-        isRoomClosed = true
         clearStoredRoomSession()
         shouldRestoreRoomSession = false
         state.screen = 'welcome'
@@ -1723,17 +1753,21 @@ function connectSocket(): void {
   })
 
   socket.addEventListener('close', () => {
-    if (!isPageUnloading && !isRoomClosed) {
-      window.alert(t('prompts.connectionClosed'))
+    if (isPageUnloading) {
+      return
     }
 
-    isRoomClosed = false
+    reconnectAttempt += 1
 
-    // The server closes the socket after room-closed/left-room/expired-session; reconnect so the
-    // next create-room/join-room call has a live connection instead of silently queuing forever.
-    if (!isPageUnloading) {
-      setTimeout(connectSocket, 1000)
+    if (isActiveRoomScreen()) {
+      updateConnectionStatus(true)
+      if (reconnectAttempt >= 5 && !reconnectAlertShown) {
+        reconnectAlertShown = true
+        window.alert(t('prompts.connectionClosed'))
+      }
     }
+
+    scheduleSocketReconnect()
   })
 }
 
@@ -1741,6 +1775,10 @@ connectSocket()
 
 window.addEventListener('pagehide', () => {
   isPageUnloading = true
+  if (reconnectTimer !== null) {
+    window.clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
 })
 
 async function consumeEmailVerificationLink(): Promise<void> {

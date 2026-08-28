@@ -187,6 +187,7 @@
   "prompts.verifyLater": "Could not verify your email right now. Please try the link again later.",
   "prompts.somethingWentWrong": "Something went wrong.",
   "prompts.invalidRoomData": "The room connection sent invalid data.",
+  "prompts.reconnecting": "Reconnecting...",
   "prompts.connectionClosed": "The game server connection was closed. Refresh the page to reconnect.",
   "prompts.defaultPlayerName": "Player",
   "prompts.defaultHostName": "Host",

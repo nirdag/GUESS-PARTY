@@ -85,6 +85,13 @@ button {
   font-weight: 700;
 }
 
+.connection-status {
+  color: var(--secondary);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .quit-button {
   border: 1px solid rgba(248, 113, 113, 0.35);
   border-radius: 999px;
