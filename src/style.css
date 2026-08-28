@@ -176,16 +176,41 @@ button {
   padding: 11px 14px;
 }
 
-.toggle-field {
+.guess-time-counter {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: space-between;
+  gap: 16px;
+  width: 180px;
+  min-height: 46px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(15, 21, 37, 0.7);
+  padding: 5px;
 }
 
-.toggle-field input {
-  width: auto;
-  min-height: 0;
-  accent-color: var(--primary, #7c9cff);
+.counter-button {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: white;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.counter-button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.counter-value {
+  min-width: 54px;
+  color: white;
+  font-size: 1.1rem;
+  font-weight: 700;
+  text-align: center;
 }
 
 .field-hint {

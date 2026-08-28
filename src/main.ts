@@ -62,7 +62,7 @@ type RoomState = {
   hostId: string | null
   timeLeft: number
   language: LanguageCode
-  guessTimeoutEnabled: boolean
+  guessTimeoutSeconds: number
   guessDeadlineMs: number | null
   remainingAuthorIds: string[]
 }
@@ -168,8 +168,7 @@ const state = {
   language: getLanguage(),
   selectedAvatar: AVATAR_OPTIONS[0],
   myAvatar: '',
-  enforceGuessTimeout: false,
-  guessTimeoutEnabled: false,
+  guessTimeoutSeconds: 20,
   guessDeadlineMs: null as number | null,
   remainingAuthorIds: [] as string[],
   adminError: '',
@@ -218,7 +217,7 @@ function formatScore(value: number): string {
 }
 
 function renderGuessTimerBox(fallbackLabel: string): string {
-  if (state.phase === 'guessing' && state.guessTimeoutEnabled && state.guessDeadlineMs) {
+  if (state.phase === 'guessing' && state.guessDeadlineMs) {
     const secondsLeft = Math.max(0, Math.ceil((state.guessDeadlineMs - Date.now()) / 1000))
     return `<div class="timer-box ${secondsLeft <= 5 ? 'urgent' : ''}" data-role="guess-countdown">${t('hostManaging.timeLeft', { seconds: secondsLeft })}</div>`
   }
@@ -305,7 +304,7 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   state.guesses = serverState.guesses ?? state.guesses
   state.timeLeft = serverState.timeLeft ?? state.timeLeft
   state.phase = serverState.phase ?? state.phase
-  state.guessTimeoutEnabled = serverState.guessTimeoutEnabled ?? state.guessTimeoutEnabled
+  state.guessTimeoutSeconds = serverState.guessTimeoutSeconds ?? state.guessTimeoutSeconds
   state.guessDeadlineMs = serverState.guessDeadlineMs ?? null
   state.remainingAuthorIds = serverState.remainingAuthorIds ?? state.remainingAuthorIds
   state.hasSubmittedAnswer = state.answers.some((answer) => answer.playerId === state.currentPlayerId)
@@ -358,7 +357,7 @@ function stopGuessCountdown(): void {
 }
 
 function tickGuessCountdown(): void {
-  if (state.phase !== 'guessing' || !state.guessTimeoutEnabled || !state.guessDeadlineMs) {
+  if (state.phase !== 'guessing' || !state.guessDeadlineMs) {
     stopGuessCountdown()
     return
   }
@@ -371,7 +370,7 @@ function tickGuessCountdown(): void {
 }
 
 function manageGuessCountdown(): void {
-  if (state.phase === 'guessing' && state.guessTimeoutEnabled && state.guessDeadlineMs) {
+  if (state.phase === 'guessing' && state.guessDeadlineMs) {
     if (guessCountdownHandle === null) {
       tickGuessCountdown()
       guessCountdownHandle = window.setInterval(tickGuessCountdown, 250)
@@ -382,13 +381,13 @@ function manageGuessCountdown(): void {
   stopGuessCountdown()
 }
 
-function createRoomSession(name: string, language: LanguageCode, avatar: string, enforceGuessTimeout: boolean): void {
+function createRoomSession(name: string, language: LanguageCode, avatar: string, guessTimeoutSeconds: number): void {
   const nextName = name.trim() || t('prompts.defaultHostName')
   state.playerName = nextName
   state.role = 'host'
   state.language = language
   state.myAvatar = avatar
-  state.enforceGuessTimeout = enforceGuessTimeout
+  state.guessTimeoutSeconds = guessTimeoutSeconds
   isRoomClosed = false
   setLanguage(language)
   shouldRestoreRoomSession = false
@@ -396,12 +395,12 @@ function createRoomSession(name: string, language: LanguageCode, avatar: string,
   state.screen = 'lobby'
 
   if (socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, enforceGuessTimeout }))
+    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds }))
     return
   }
 
   queuedAction = () => {
-    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, enforceGuessTimeout }))
+    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds }))
   }
 
   renderApp()
@@ -656,11 +655,13 @@ function renderHostSetup(): void {
           <select id="host-setup-language">${languageOptions}</select>
           <label>${t('hostSetup.avatarLabel')}</label>
           ${renderAvatarPicker(state.selectedAvatar)}
-          <label class="toggle-field">
-            <input id="host-setup-timeout-toggle" type="checkbox" ${state.enforceGuessTimeout ? 'checked' : ''} />
-            <span>${t('hostSetup.enforceTimeoutLabel')}</span>
-          </label>
-          <small class="field-hint">${t('hostSetup.enforceTimeoutHint')}</small>
+          <label for="host-setup-timeout-counter">${t('hostSetup.guessTimeLabel')}</label>
+          <div class="guess-time-counter" role="group" aria-label="${t('hostSetup.guessTimeLabel')}">
+            <button class="counter-button" type="button" data-role="guess-time-decrease" aria-label="${t('hostSetup.decreaseGuessTime')}">-</button>
+            <output id="host-setup-timeout-counter" class="counter-value" aria-live="polite">${state.guessTimeoutSeconds}s</output>
+            <button class="counter-button" type="button" data-role="guess-time-increase" aria-label="${t('hostSetup.increaseGuessTime')}">+</button>
+          </div>
+          <small class="field-hint">${t('hostSetup.guessTimeHint')}</small>
           <button class="primary-button" type="submit">${t('hostSetup.submit')}</button>
         </form>
 
@@ -685,12 +686,23 @@ function renderHostSetup(): void {
     state.language = (event.target as HTMLSelectElement).value as LanguageCode
   })
 
+  const updateGuessTime = (change: number) => {
+    state.guessTimeoutSeconds = Math.min(60, Math.max(20, state.guessTimeoutSeconds + change))
+    const output = root.querySelector<HTMLOutputElement>('#host-setup-timeout-counter')
+    if (output) {
+      output.value = `${state.guessTimeoutSeconds}s`
+      output.textContent = output.value
+    }
+  }
+
+  root.querySelector('[data-role="guess-time-decrease"]')?.addEventListener('click', () => updateGuessTime(-5))
+  root.querySelector('[data-role="guess-time-increase"]')?.addEventListener('click', () => updateGuessTime(5))
+
   root.querySelector<HTMLFormElement>('#host-setup-form')?.addEventListener('submit', (event) => {
     event.preventDefault()
     const name = root.querySelector<HTMLInputElement>('#host-setup-name')?.value ?? ''
     const language = (root.querySelector<HTMLSelectElement>('#host-setup-language')?.value ?? 'en') as LanguageCode
-    const enforceGuessTimeout = root.querySelector<HTMLInputElement>('#host-setup-timeout-toggle')?.checked ?? false
-    createRoomSession(name, language, state.selectedAvatar, enforceGuessTimeout)
+    createRoomSession(name, language, state.selectedAvatar, state.guessTimeoutSeconds)
   })
 }
 

@@ -29,8 +29,10 @@
   "hostSetup.namePlaceholder": "Host",
   "hostSetup.languageLabel": "Room language",
   "hostSetup.avatarLabel": "Choose your avatar",
-  "hostSetup.enforceTimeoutLabel": "Enforce 20s guess timer",
-  "hostSetup.enforceTimeoutHint": "Players will have 20 seconds to lock in a guess before the round moves on automatically.",
+  "hostSetup.guessTimeLabel": "Guess time",
+  "hostSetup.guessTimeHint": "Players have this long to lock in a guess before the round moves on automatically.",
+  "hostSetup.decreaseGuessTime": "Decrease guess time",
+  "hostSetup.increaseGuessTime": "Increase guess time",
   "hostSetup.submit": "Create room",
   "hostSetup.back": "Back",
 

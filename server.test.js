@@ -49,7 +49,7 @@ function createTestRoom() {
     hostId: `TEST12-host-${Date.now()}`,
     hostName: 'Host',
     playerTurnIndex: 0,
-    guessTimeoutEnabled: false,
+    guessTimeoutSeconds: 20,
     guessDeadlineMs: null,
     guessTimeoutHandle: null,
     gameStartedAt: null,
@@ -440,32 +440,39 @@ describe('HIGH: Guess Round Timeout', () => {
     vi.useRealTimers();
   });
 
-  it('armGuessTimeout does nothing when the room has the timer disabled', () => {
-    room.guessTimeoutEnabled = false;
-    armGuessTimeout(room);
+  it('createRoom defaults the guess timeout to 20 seconds', () => {
+    const createdRoom = createRoom({ hostName: 'Host', hostAccountId: 'host-account' });
 
-    expect(room.guessTimeoutHandle).toBeNull();
-    expect(room.guessDeadlineMs).toBeNull();
+    expect(createdRoom.guessTimeoutSeconds).toBe(20);
+    expect(makeRoomState(createdRoom).guessTimeoutSeconds).toBe(20);
   });
 
-  it('armGuessTimeout schedules a deadline and auto-calls calculateRoundScores when enabled', () => {
-    room.guessTimeoutEnabled = true;
+  it('createRoom normalizes an invalid guess timeout to 20 seconds', () => {
+    const createdRoom = createRoom({ hostName: 'Host', hostAccountId: 'host-account', guessTimeoutSeconds: 15 });
+
+    expect(createdRoom.guessTimeoutSeconds).toBe(20);
+  });
+
+  it('armGuessTimeout uses the room guess timeout', () => {
+    room.guessTimeoutSeconds = 25;
     room.phase = 'guessing';
+    armGuessTimeout(room);
+
     room.currentAnswer = { playerId: 'p1', text: 'test answer' };
     room.guesses = [];
-
-    armGuessTimeout(room);
 
     expect(room.guessDeadlineMs).toBeGreaterThan(Date.now());
     expect(room.guessTimeoutHandle).not.toBeNull();
 
-    vi.advanceTimersByTime(GUESS_TIMEOUT_SECONDS * 1000);
+    vi.advanceTimersByTime(24 * 1000);
+    expect(room.phase).toBe('guessing');
+
+    vi.advanceTimersByTime(1000);
 
     expect(room.phase).toBe('round-end');
   });
 
   it('calculateRoundScores clears a pending auto-timeout so it never double-fires', () => {
-    room.guessTimeoutEnabled = true;
     room.phase = 'guessing';
     room.currentAnswer = { playerId: 'p1', text: 'test answer' };
     room.guesses = [];
@@ -482,7 +489,6 @@ describe('HIGH: Guess Round Timeout', () => {
   });
 
   it('prepareCurrentAnswer arms a fresh timeout for each new guessing round when enabled', () => {
-    room.guessTimeoutEnabled = true;
     room.answerQueue = [{ playerId: 'p1', text: 'test answer', playerName: 'Alice' }];
 
     prepareCurrentAnswer(room);
@@ -492,7 +498,6 @@ describe('HIGH: Guess Round Timeout', () => {
   });
 
   it('prepareCurrentAnswer clears the timeout when the answer queue is exhausted', () => {
-    room.guessTimeoutEnabled = true;
     room.answerQueue = [];
 
     prepareCurrentAnswer(room);

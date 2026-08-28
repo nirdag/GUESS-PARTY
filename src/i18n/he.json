@@ -29,8 +29,10 @@
   "hostSetup.namePlaceholder": "מנחה",
   "hostSetup.languageLabel": "שפת החדר",
   "hostSetup.avatarLabel": "בחר את הדמות שלך",
-  "hostSetup.enforceTimeoutLabel": "הפעל טיימר ניחוש של 20 שניות",
-  "hostSetup.enforceTimeoutHint": "לשחקנים יהיו 20 שניות לבחור ניחוש לפני שהסבב ימשיך אוטומטית.",
+  "hostSetup.guessTimeLabel": "זמן לניחוש",
+  "hostSetup.guessTimeHint": "לשחקנים יהיה הזמן הזה לנעול ניחוש לפני שהסבב ימשיך אוטומטית.",
+  "hostSetup.decreaseGuessTime": "הפחת את זמן הניחוש",
+  "hostSetup.increaseGuessTime": "הגדל את זמן הניחוש",
   "hostSetup.submit": "צור חדר",
   "hostSetup.back": "חזרה",
 
