@@ -43,6 +43,7 @@
   "joinSetup.namePlaceholder": "שחקן",
   "joinSetup.roomCodeLabel": "קוד חדר",
   "joinSetup.roomCodePlaceholder": "הזן את קוד החדר",
+  "joinSetup.roomCodePrefilled": "קוד החדר הזה הוכלל בקישור ההזמנה שלך.",
   "joinSetup.avatarLabel": "בחר את הדמות שלך",
   "joinSetup.submit": "הצטרף לחדר",
   "joinSetup.back": "חזרה",
@@ -196,6 +197,15 @@
   "prompts.roomClosed": "המנחה סגר את החדר.",
   "prompts.guessAlreadyLocked": "הניחוש שלך נעול ולא ניתן לשנות אותו.",
   "prompts.playerLeft": "{name} עזב את החדר.",
+
+  "roomSharing.shareButton": "שתף חדר",
+  "roomSharing.title": "שתף את החדר הזה",
+  "roomSharing.qrAlt": "קוד QR להצטרפות לחדר",
+  "roomSharing.linkLabel": "שתף את הקישור הזה:",
+  "roomSharing.copyButton": "העתק קישור",
+  "roomSharing.hint": "שתף את הקישור או סרוק את קוד ה-QR כדי להזמין שחקנים להצטרף לחדר שלך.",
+  "roomSharing.copiedMessage": "הקישור הועתק ללוח!",
+  "roomSharing.copyError": "נכשל העתקת הקישור ללוח.",
 
   "errors.AUTH_REQUIRED": "התחבר כדי ליצור חדר.",
   "errors.ROOM_SESSION_EXPIRED": "חדר זה אינו זמין עוד.",

@@ -43,6 +43,7 @@
   "joinSetup.namePlaceholder": "Player",
   "joinSetup.roomCodeLabel": "Room code",
   "joinSetup.roomCodePlaceholder": "Enter the room code",
+  "joinSetup.roomCodePrefilled": "This room code was included in your invitation link.",
   "joinSetup.avatarLabel": "Choose your avatar",
   "joinSetup.submit": "Join room",
   "joinSetup.back": "Back",
@@ -196,6 +197,15 @@
   "prompts.roomClosed": "The host closed the room.",
   "prompts.guessAlreadyLocked": "Your guess is locked and cannot be changed.",
   "prompts.playerLeft": "{name} left the room.",
+
+  "roomSharing.shareButton": "Share room",
+  "roomSharing.title": "Share this room",
+  "roomSharing.qrAlt": "QR code to join the room",
+  "roomSharing.linkLabel": "Share this link:",
+  "roomSharing.copyButton": "Copy link",
+  "roomSharing.hint": "Share the link or scan the QR code to invite players to join your room.",
+  "roomSharing.copiedMessage": "Link copied to clipboard!",
+  "roomSharing.copyError": "Failed to copy link to clipboard.",
 
   "errors.AUTH_REQUIRED": "Log in to create a room.",
   "errors.ROOM_SESSION_EXPIRED": "This room is no longer available.",

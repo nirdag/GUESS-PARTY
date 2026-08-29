@@ -1,4 +1,5 @@
 import './style.css'
+import QRCode from 'qrcode'
 import { type LanguageCode, getLanguage, languages, setLanguage, t } from './i18n'
 
 type Role = 'host' | 'player'
@@ -176,6 +177,8 @@ const state = {
   adminQuestions: [] as GalleryQuestion[],
   showQuestionGallery: false,
   galleryQuestions: [] as GalleryQuestion[],
+  showRoomSharingPanel: false,
+  roomCodePrefilledFromUrl: false,
 }
 
 let queuedAction: (() => void) | null = null
@@ -212,6 +215,45 @@ function buildApiUrl(path: string): string {
   }
 
   return `${window.location.protocol}//${window.location.hostname || 'localhost'}:${DEV_API_PORT}${path}`
+}
+
+function parseRoomJoinLink(): { roomCode: string; language: LanguageCode } | null {
+  try {
+    const params = new URLSearchParams(window.location.search)
+    const roomCode = params.get('roomCode')?.toUpperCase().trim()
+    const language = params.get('lang')
+
+    if (!roomCode) {
+      return null
+    }
+
+    // Validate room code format (6 alphanumeric characters)
+    if (!/^[A-Z0-9]{6}$/.test(roomCode)) {
+      return null
+    }
+
+    // Validate and normalize language
+    const normalizedLang = (language === 'en' || language === 'he') ? language : 'en'
+
+    // Strip the room link params from URL to prevent accidental re-sharing
+    params.delete('roomCode')
+    params.delete('lang')
+    const cleanedSearch = params.toString()
+    window.history.replaceState(null, '', `${window.location.pathname}${cleanedSearch ? `?${cleanedSearch}` : ''}`)
+
+    return { roomCode, language: normalizedLang }
+  } catch {
+    return null
+  }
+}
+
+function generateRoomShareLink(): string {
+  const baseUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}`
+  const params = new URLSearchParams({
+    roomCode: state.roomCode,
+    lang: state.language,
+  })
+  return `${baseUrl}?${params.toString()}`
 }
 
 function isActiveRoomScreen(): boolean {
@@ -273,6 +315,46 @@ function renderAvatarPicker(selected: string): string {
     .join('')
 
   return `<div class="avatar-picker">${options}</div>`
+}
+
+async function renderRoomSharingPanel(): Promise<string> {
+  const shareLink = generateRoomShareLink()
+  
+  let qrCodeDataUrl = ''
+  try {
+    qrCodeDataUrl = await QRCode.toDataURL(shareLink, {
+      errorCorrectionLevel: 'M',
+      type: 'image/png',
+      width: 200,
+      margin: 1,
+      color: {
+        dark: '#000000',
+        light: '#FFFFFF',
+      },
+    })
+  } catch (error) {
+    console.error('Failed to generate QR code:', error)
+  }
+
+  return `
+    <div class="room-sharing-panel">
+      <div class="sharing-content">
+        <h3>${t('roomSharing.title')}</h3>
+        
+        ${qrCodeDataUrl ? `<img src="${qrCodeDataUrl}" alt="${t('roomSharing.qrAlt')}" class="qr-code" />` : ''}
+        
+        <div class="share-link-container">
+          <label for="room-share-link">${t('roomSharing.linkLabel')}</label>
+          <div class="share-link-input-group">
+            <input id="room-share-link" type="text" value="${shareLink}" readonly />
+            <button class="copy-button" type="button" data-role="copy-share-link">${t('roomSharing.copyButton')}</button>
+          </div>
+        </div>
+        
+        <p class="sharing-hint">${t('roomSharing.hint')}</p>
+      </div>
+    </div>
+  `
 }
 
 function getCurrentPlayer(): Player | undefined {
@@ -734,6 +816,10 @@ function renderHostSetup(): void {
 }
 
 function renderJoinSetup(): void {
+  const roomCodeReadOnly = state.roomCodePrefilledFromUrl
+  const roomCodeDisabled = roomCodeReadOnly ? 'disabled readonly' : ''
+  const roomCodeHint = roomCodeReadOnly ? `<small class="field-hint">${t('joinSetup.roomCodePrefilled')}</small>` : ''
+
   root.innerHTML = `
     <main class="shell">
       <section class="panel membership-panel">
@@ -745,7 +831,8 @@ function renderJoinSetup(): void {
           <label for="join-setup-name">${t('joinSetup.nameLabel')}</label>
           <input id="join-setup-name" type="text" placeholder="${t('joinSetup.namePlaceholder')}" value="${state.playerName}" required />
           <label for="join-setup-room-code">${t('joinSetup.roomCodeLabel')}</label>
-          <input id="join-setup-room-code" type="text" placeholder="${t('joinSetup.roomCodePlaceholder')}" value="${state.roomCode}" required />
+          <input id="join-setup-room-code" type="text" placeholder="${t('joinSetup.roomCodePlaceholder')}" value="${state.roomCode}" required ${roomCodeDisabled} />
+          ${roomCodeHint}
           <label>${t('joinSetup.avatarLabel')}</label>
           ${renderAvatarPicker(state.selectedAvatar)}
           <button class="primary-button" type="submit">${t('joinSetup.submit')}</button>
@@ -767,9 +854,11 @@ function renderJoinSetup(): void {
     state.playerName = (event.target as HTMLInputElement).value
   })
 
-  root.querySelector<HTMLInputElement>('#join-setup-room-code')?.addEventListener('input', (event) => {
-    state.roomCode = (event.target as HTMLInputElement).value
-  })
+  if (!roomCodeReadOnly) {
+    root.querySelector<HTMLInputElement>('#join-setup-room-code')?.addEventListener('input', (event) => {
+      state.roomCode = (event.target as HTMLInputElement).value
+    })
+  }
 
   root.querySelector<HTMLFormElement>('#join-setup-form')?.addEventListener('submit', (event) => {
     event.preventDefault()
@@ -1082,7 +1171,15 @@ function renderLobby(): void {
             ? `<button class="primary-button" type="button" data-role="start-round" ${hostQuestionIsValid ? '' : 'disabled'}>${t('lobby.startRound')}</button>`
             : `<div class="chip">${t('lobby.waitingForHost')}</div>`}
         </div>
+
+        ${state.role === 'host'
+          ? `<button class="secondary-button" type="button" data-role="toggle-share-room">${t('roomSharing.shareButton')}</button>`
+          : ''}
       </section>
+
+      ${state.role === 'host' && state.showRoomSharingPanel
+        ? `<section class="panel" id="sharing-panel-container"></section>`
+        : ''}
 
       <section class="panel">
         <div class="section-head">
@@ -1187,6 +1284,33 @@ function renderLobby(): void {
       </section>
     </main>
   `
+
+  // Render sharing panel if needed
+  if (state.role === 'host' && state.showRoomSharingPanel) {
+    const sharingContainer = root.querySelector('#sharing-panel-container')
+    if (sharingContainer) {
+      void renderRoomSharingPanel().then((panelHtml) => {
+        sharingContainer.innerHTML = panelHtml
+
+        // Add copy button handler
+        sharingContainer.querySelector('[data-role="copy-share-link"]')?.addEventListener('click', () => {
+          const linkInput = sharingContainer.querySelector<HTMLInputElement>('#room-share-link')
+          if (linkInput) {
+            void navigator.clipboard.writeText(linkInput.value).then(() => {
+              window.alert(t('roomSharing.copiedMessage'))
+            }).catch(() => {
+              window.alert(t('roomSharing.copyError'))
+            })
+          }
+        })
+      })
+    }
+  }
+
+  root.querySelector('[data-role="toggle-share-room"]')?.addEventListener('click', () => {
+    state.showRoomSharingPanel = !state.showRoomSharingPanel
+    renderApp()
+  })
 
   root.querySelector('[data-role="start-round"]')?.addEventListener('click', () => {
     startRound()
@@ -1806,6 +1930,18 @@ async function consumeEmailVerificationLink(): Promise<void> {
   }
 }
 
+function initializeRoomLinkIfProvided(): void {
+  const roomLinkData = parseRoomJoinLink()
+  if (roomLinkData) {
+    state.roomCode = roomLinkData.roomCode
+    state.language = roomLinkData.language
+    state.screen = 'join-setup'
+    state.roomCodePrefilledFromUrl = true
+    setLanguage(roomLinkData.language)
+  }
+}
+
 consumeEmailVerificationLink().finally(() => {
+  initializeRoomLinkIfProvided()
   renderApp()
 })
