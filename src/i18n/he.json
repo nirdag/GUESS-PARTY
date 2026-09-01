@@ -156,6 +156,8 @@
   "playerGuessing.selected": "נבחר",
   "playerGuessing.noSelectionYet": "עדיין אין בחירה",
 
+  "guessIntro.getReady": "התכוננו לנחש!",
+
   "roundEnd.complete": "הסבב הסתיים",
   "roundEnd.standings": "תוצאות הסבב",
   "roundEnd.results": "תוצאות הסבב",

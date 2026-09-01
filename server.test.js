@@ -25,7 +25,9 @@ import {
   AVATAR_OPTIONS,
   armGuessTimeout,
   clearGuessTimeout,
+  clearGuessCountdown,
   GUESS_TIMEOUT_SECONDS,
+  GUESS_COUNTDOWN_MS,
 } from './server.js';
 
 // Mock room/player creation for testing
@@ -52,6 +54,8 @@ function createTestRoom() {
     guessTimeoutSeconds: 20,
     guessDeadlineMs: null,
     guessTimeoutHandle: null,
+    guessCountdownEndsAt: null,
+    guessCountdownHandle: null,
     gameStartedAt: null,
     questionsPlayedThisGame: 0,
   };
@@ -437,6 +441,7 @@ describe('HIGH: Guess Round Timeout', () => {
 
   afterEach(() => {
     clearGuessTimeout(room);
+    clearGuessCountdown(room);
     vi.useRealTimers();
   });
 
@@ -493,8 +498,30 @@ describe('HIGH: Guess Round Timeout', () => {
 
     prepareCurrentAnswer(room);
 
+    // The celebratory countdown plays first; the real guess timer isn't armed yet.
+    expect(room.guessDeadlineMs).toBeNull();
+    expect(room.guessCountdownEndsAt).not.toBeNull();
+    expect(room.guessCountdownHandle).not.toBeNull();
+
+    vi.advanceTimersByTime(GUESS_COUNTDOWN_MS);
+
+    expect(room.guessCountdownEndsAt).toBeNull();
     expect(room.guessDeadlineMs).not.toBeNull();
     expect(room.guessTimeoutHandle).not.toBeNull();
+  });
+
+  it('calculateRoundScores clears a pending guess countdown so it never arms the real timer late', () => {
+    room.answerQueue = [{ playerId: 'p1', text: 'test answer', playerName: 'Alice' }];
+    prepareCurrentAnswer(room);
+
+    calculateRoundScores(room);
+
+    expect(room.guessCountdownHandle).toBeNull();
+    expect(room.guessCountdownEndsAt).toBeNull();
+
+    // Advancing past the countdown window must not arm the real timer against the already-ended round.
+    vi.advanceTimersByTime(GUESS_COUNTDOWN_MS);
+    expect(room.guessDeadlineMs).toBeNull();
   });
 
   it('prepareCurrentAnswer clears the timeout when the answer queue is exhausted', () => {
@@ -505,6 +532,8 @@ describe('HIGH: Guess Round Timeout', () => {
     expect(room.phase).toBe('game-end');
     expect(room.guessDeadlineMs).toBeNull();
     expect(room.guessTimeoutHandle).toBeNull();
+    expect(room.guessCountdownEndsAt).toBeNull();
+    expect(room.guessCountdownHandle).toBeNull();
   });
 });
 

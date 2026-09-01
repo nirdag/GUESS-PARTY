@@ -156,6 +156,8 @@
   "playerGuessing.selected": "Selected",
   "playerGuessing.noSelectionYet": "No selection yet",
 
+  "guessIntro.getReady": "Get ready to guess!",
+
   "roundEnd.complete": "Round complete",
   "roundEnd.standings": "Round standings",
   "roundEnd.results": "Round results",

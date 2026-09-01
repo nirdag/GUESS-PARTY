@@ -65,6 +65,7 @@ type RoomState = {
   language: LanguageCode
   guessTimeoutSeconds: number
   guessDeadlineMs: number | null
+  guessCountdownEndsAt: number | null
   remainingAuthorIds: string[]
 }
 
@@ -171,6 +172,7 @@ const state = {
   myAvatar: '',
   guessTimeoutSeconds: 20,
   guessDeadlineMs: null as number | null,
+  guessCountdownEndsAt: null as number | null,
   remainingAuthorIds: [] as string[],
   adminError: '',
   adminLanguageFilter: 'en' as LanguageCode,
@@ -416,6 +418,7 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   state.phase = serverState.phase ?? state.phase
   state.guessTimeoutSeconds = serverState.guessTimeoutSeconds ?? state.guessTimeoutSeconds
   state.guessDeadlineMs = serverState.guessDeadlineMs ?? null
+  state.guessCountdownEndsAt = serverState.guessCountdownEndsAt ?? null
   state.remainingAuthorIds = serverState.remainingAuthorIds ?? state.remainingAuthorIds
   state.hasSubmittedAnswer = state.answers.some((answer) => answer.playerId === state.currentPlayerId)
 
@@ -454,6 +457,7 @@ function applyRoomState(serverState: Partial<RoomState>): void {
 
   renderApp()
   manageGuessCountdown()
+  manageIntroCountdown()
 }
 
 // Recomputed locally from an absolute deadline timestamp so we don't need a broadcast every second.
@@ -489,6 +493,78 @@ function manageGuessCountdown(): void {
   }
 
   stopGuessCountdown()
+}
+
+// Recomputed locally from an absolute deadline timestamp shared by host and players, so the "get ready" animation stays in sync without extra broadcasts.
+let introCountdownHandle: number | null = null
+
+function stopIntroCountdown(): void {
+  if (introCountdownHandle !== null) {
+    window.clearInterval(introCountdownHandle)
+    introCountdownHandle = null
+  }
+}
+
+function tickIntroCountdown(): void {
+  if (state.phase !== 'guessing' || !state.guessCountdownEndsAt) {
+    stopIntroCountdown()
+    return
+  }
+
+  const remainingMs = state.guessCountdownEndsAt - Date.now()
+  const overlay = root.querySelector<HTMLElement>('[data-role="guess-intro-overlay"]')
+
+  if (remainingMs <= 0) {
+    overlay?.classList.add('fading')
+    stopIntroCountdown()
+    return
+  }
+
+  const secondsLeft = Math.ceil(remainingMs / 1000)
+  const messageElement = root.querySelector<HTMLElement>('[data-role="guess-intro-message"]')
+  const numberElement = root.querySelector<HTMLElement>('[data-role="guess-intro-number"]')
+
+  if (messageElement && numberElement) {
+    if (secondsLeft > 3) {
+      messageElement.hidden = false
+      numberElement.hidden = true
+    } else {
+      messageElement.hidden = true
+      numberElement.hidden = false
+      if (numberElement.textContent !== String(secondsLeft)) {
+        numberElement.textContent = String(secondsLeft)
+        numberElement.classList.remove('pop')
+        // Force a reflow so the pop animation restarts for each new number.
+        void numberElement.offsetWidth
+        numberElement.classList.add('pop')
+      }
+    }
+  }
+}
+
+function manageIntroCountdown(): void {
+  if (state.phase === 'guessing' && state.guessCountdownEndsAt) {
+    if (introCountdownHandle === null) {
+      tickIntroCountdown()
+      introCountdownHandle = window.setInterval(tickIntroCountdown, 200)
+    }
+    return
+  }
+
+  stopIntroCountdown()
+}
+
+function renderGuessIntroOverlay(): string {
+  if (!state.guessCountdownEndsAt || state.guessCountdownEndsAt <= Date.now()) {
+    return ''
+  }
+
+  return `
+    <div class="guess-intro-overlay" data-role="guess-intro-overlay">
+      <p class="guess-intro-message" data-role="guess-intro-message">${t('guessIntro.getReady')}</p>
+      <p class="guess-intro-number pop" data-role="guess-intro-number" hidden></p>
+    </div>
+  `
 }
 
 function createRoomSession(name: string, language: LanguageCode, avatar: string, guessTimeoutSeconds: number): void {
@@ -1362,6 +1438,7 @@ function renderHostManaging(): void {
     <main class="shell">
       ${renderIdentityBanner()}
       <section class="panel round-panel">
+        ${state.phase === 'guessing' ? renderGuessIntroOverlay() : ''}
         <div class="round-header">
           <div>
             <p class="eyebrow">${t('hostManaging.round', { number: state.answerRoundNumber })}</p>
@@ -1528,6 +1605,7 @@ function renderPlayerGuessing(): void {
     <main class="shell">
       ${renderIdentityBanner()}
       <section class="panel round-panel">
+        ${renderGuessIntroOverlay()}
         <div class="round-header">
           <div>
             <p class="eyebrow">${t('hostManaging.round', { number: state.answerRoundNumber })}</p>

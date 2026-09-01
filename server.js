@@ -75,6 +75,8 @@ const supportedLanguages = new Set(['en', 'he']);
 const GUESS_TIMEOUT_SECONDS = 20;
 const MIN_GUESS_TIMEOUT_SECONDS = 20;
 const MAX_GUESS_TIMEOUT_SECONDS = 60;
+// Celebratory "get ready to guess" countdown played before the real per-answer guess timer is armed.
+const GUESS_COUNTDOWN_MS = 4000;
 // Points for a correct guess by arrival order (1st correct guess, 2nd, ...); last value is the floor for the rest.
 const SPEED_TIERS = [120, 100, 80, 60, 40];
 // Fixed allow-list: never trust arbitrary client-supplied avatar strings.
@@ -148,6 +150,7 @@ function makeRoomState(room) {
     language: room.language,
     guessTimeoutSeconds: room.guessTimeoutSeconds,
     guessDeadlineMs: room.guessDeadlineMs,
+    guessCountdownEndsAt: room.guessCountdownEndsAt,
     remainingAuthorIds: [...getEligibleGuessTargetIds(room)],
   };
 }
@@ -311,6 +314,8 @@ function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvata
     guessTimeoutSeconds: normalizeGuessTimeoutSeconds(guessTimeoutSeconds),
     guessDeadlineMs: null,
     guessTimeoutHandle: null,
+    guessCountdownEndsAt: null,
+    guessCountdownHandle: null,
     gameStartedAt: null,
     questionsPlayedThisGame: 0,
   };
@@ -325,6 +330,14 @@ function clearGuessTimeout(room) {
     room.guessTimeoutHandle = null;
   }
   room.guessDeadlineMs = null;
+}
+
+function clearGuessCountdown(room) {
+  if (room.guessCountdownHandle) {
+    clearTimeout(room.guessCountdownHandle);
+    room.guessCountdownHandle = null;
+  }
+  room.guessCountdownEndsAt = null;
 }
 
 function armGuessTimeout(room) {
@@ -393,6 +406,7 @@ function closeRoom(room) {
 
   emitGameEndedIfInProgress(room);
   clearGuessTimeout(room);
+  clearGuessCountdown(room);
   rooms.delete(room.code);
   room.hostReconnectToken = null;
   room.hostDisconnectedAt = null;
@@ -458,6 +472,8 @@ function startRound(room, customQuestion = '') {
 
 function startNewGame(room) {
   emitGameEndedIfInProgress(room);
+  clearGuessTimeout(room);
+  clearGuessCountdown(room);
   room.phase = 'lobby';
   room.answerRoundNumber = 0;
   room.question = '';
@@ -499,6 +515,7 @@ function prepareCurrentAnswer(room) {
     room.answerAuthorId = null;
     room.selectedAnswer = '';
     clearGuessTimeout(room);
+    clearGuessCountdown(room);
     emitGameEndedIfInProgress(room);
     broadcastRoom(room);
     return;
@@ -515,7 +532,18 @@ function prepareCurrentAnswer(room) {
   room.activeGuesserIndex = 0;
   room.answerRoundNumber = (room.answers.length || room.answerQueue.length + 1) - room.answerQueue.length;
   room.timeLeft = 0;
-  armGuessTimeout(room);
+
+  // Play a celebratory countdown before the real guess timer starts, so players don't lose guessing time to it.
+  clearGuessTimeout(room);
+  clearGuessCountdown(room);
+  room.guessCountdownEndsAt = Date.now() + GUESS_COUNTDOWN_MS;
+  room.guessCountdownHandle = setTimeout(() => {
+    room.guessCountdownHandle = null;
+    room.guessCountdownEndsAt = null;
+    armGuessTimeout(room);
+    broadcastRoom(room);
+  }, GUESS_COUNTDOWN_MS);
+  room.guessCountdownHandle.unref?.();
   broadcastRoom(room);
 }
 
@@ -546,6 +574,7 @@ function moveToNextAnswer(room) {
 
 function calculateRoundScores(room) {
   clearGuessTimeout(room);
+  clearGuessCountdown(room);
 
   if (room.phase !== 'guessing' || !room.currentAnswer) {
     return;
@@ -1111,7 +1140,9 @@ export {
   AVATAR_OPTIONS,
   armGuessTimeout,
   clearGuessTimeout,
+  clearGuessCountdown,
   GUESS_TIMEOUT_SECONDS,
+  GUESS_COUNTDOWN_MS,
 };
 
 // Graceful shutdown for testing
