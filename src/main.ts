@@ -1713,7 +1713,7 @@ function renderGameEnd(): void {
 
 function renderApp(): void {
   // Screens outside an active room are never room-scoped, so they must not inherit a previous room's language.
-  if (state.screen === 'welcome' || state.screen === 'host-setup' || state.screen === 'join-setup' || state.screen === 'admin-login' || state.screen === 'admin-gallery') {
+  if (state.screen === 'welcome' || state.screen === 'host-setup' || state.screen === 'admin-login' || state.screen === 'admin-gallery') {
     setLanguage('en')
   }
 
