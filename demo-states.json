@@ -1,0 +1,282 @@
+{
+  "lobby": {
+    "label": "Lobby - Host View",
+    "role": "host",
+    "playerId": "host-123",
+    "playerName": "Game Master",
+    "roomCode": "DEMO1",
+    "state": {
+      "code": "DEMO1",
+      "phase": "lobby",
+      "answerRoundNumber": 1,
+      "question": "",
+      "selectedAnswer": "",
+      "answerAuthorId": null,
+      "activeGuesserIndex": 0,
+      "players": [
+        { "id": "host-123", "name": "Game Master", "score": 0, "avatar": "🎧" },
+        { "id": "p1", "name": "Alice", "score": 0, "avatar": "🦊" },
+        { "id": "p2", "name": "Bob", "score": 0, "avatar": "🐸" }
+      ],
+      "answers": [],
+      "guesses": [],
+      "roundResults": [],
+      "hostId": "host-123",
+      "timeLeft": 0,
+      "language": "en",
+      "guessTimeoutSeconds": 30,
+      "guessDeadlineMs": null,
+      "guessCountdownEndsAt": null,
+      "remainingAuthorIds": []
+    }
+  },
+  "answer-collection": {
+    "label": "Answer Collection Phase - Host View",
+    "role": "host",
+    "playerId": "host-123",
+    "playerName": "Game Master",
+    "roomCode": "DEMO1",
+    "state": {
+      "code": "DEMO1",
+      "phase": "answer-collection",
+      "answerRoundNumber": 1,
+      "question": "What is the most creative way to spend a rainy Sunday with friends?",
+      "selectedAnswer": "",
+      "answerAuthorId": null,
+      "activeGuesserIndex": 0,
+      "players": [
+        { "id": "host-123", "name": "Game Master", "score": 0, "avatar": "🎧" },
+        { "id": "p1", "name": "Alice", "score": 0, "avatar": "🦊" },
+        { "id": "p2", "name": "Bob", "score": 0, "avatar": "🐸" }
+      ],
+      "answers": [
+        { "playerId": "p1", "playerName": "Alice", "text": "Board game tournament with pizza" },
+        { "playerId": "p2", "playerName": "Bob", "text": "Movie marathon with homemade snacks" }
+      ],
+      "guesses": [],
+      "roundResults": [],
+      "hostId": "host-123",
+      "timeLeft": 0,
+      "language": "en",
+      "guessTimeoutSeconds": 30,
+      "guessDeadlineMs": null,
+      "guessCountdownEndsAt": null,
+      "remainingAuthorIds": ["p1", "p2"]
+    }
+  },
+  "player-guessing": {
+    "label": "Player Guessing Phase",
+    "role": "player",
+    "playerId": "p1",
+    "playerName": "Alice",
+    "roomCode": "DEMO1",
+    "state": {
+      "code": "DEMO1",
+      "phase": "guessing",
+      "answerRoundNumber": 1,
+      "question": "What is the most creative way to spend a rainy Sunday with friends?",
+      "selectedAnswer": "Movie marathon with homemade snacks",
+      "answerAuthorId": "p2",
+      "activeGuesserIndex": 0,
+      "players": [
+        { "id": "host-123", "name": "Game Master", "score": 0, "avatar": "🎧" },
+        { "id": "p1", "name": "Alice", "score": 120, "avatar": "🦊" },
+        { "id": "p2", "name": "Bob", "score": 0, "avatar": "🐸" }
+      ],
+      "answers": [
+        { "playerId": "p1", "playerName": "Alice", "text": "Board game tournament with pizza" },
+        { "playerId": "p2", "playerName": "Bob", "text": "Movie marathon with homemade snacks" }
+      ],
+      "guesses": [],
+      "roundResults": [],
+      "hostId": "host-123",
+      "timeLeft": 18,
+      "language": "en",
+      "guessTimeoutSeconds": 30,
+      "guessDeadlineMs": 1725187200000,
+      "guessCountdownEndsAt": 1725187200000,
+      "remainingAuthorIds": ["p2"]
+    }
+  },
+  "round-end-correct": {
+    "label": "Round End - Player Guessed Correct (Celebration Overlay)",
+    "role": "player",
+    "playerId": "p1",
+    "playerName": "Alice",
+    "roomCode": "DEMO1",
+    "state": {
+      "code": "DEMO1",
+      "phase": "round-end",
+      "answerRoundNumber": 1,
+      "question": "What is the most creative way to spend a rainy Sunday with friends?",
+      "selectedAnswer": "Movie marathon with homemade snacks",
+      "answerAuthorId": "p2",
+      "activeGuesserIndex": 0,
+      "players": [
+        { "id": "p1", "name": "Alice", "score": 240, "avatar": "🦊" },
+        { "id": "p2", "name": "Bob", "score": 0, "avatar": "🐸" },
+        { "id": "host-123", "name": "Game Master", "score": 0, "avatar": "🎧" }
+      ],
+      "answers": [
+        { "playerId": "p1", "playerName": "Alice", "text": "Board game tournament with pizza" },
+        { "playerId": "p2", "playerName": "Bob", "text": "Movie marathon with homemade snacks" }
+      ],
+      "guesses": [
+        { "guesserId": "p1", "guesserName": "Alice", "guessedId": "p2", "guessedName": "Bob", "correct": true, "points": 120 }
+      ],
+      "roundResults": [
+        { "guesserName": "Alice", "guessedName": "Bob", "correct": true, "points": 120 }
+      ],
+      "hostId": "host-123",
+      "timeLeft": 0,
+      "language": "en",
+      "guessTimeoutSeconds": 30,
+      "guessDeadlineMs": null,
+      "guessCountdownEndsAt": null,
+      "remainingAuthorIds": []
+    }
+  },
+  "round-end-incorrect": {
+    "label": "Round End - Player Guessed Incorrect (Wrong Overlay)",
+    "role": "player",
+    "playerId": "p1",
+    "playerName": "Alice",
+    "roomCode": "DEMO1",
+    "state": {
+      "code": "DEMO1",
+      "phase": "round-end",
+      "answerRoundNumber": 1,
+      "question": "What is the most creative way to spend a rainy Sunday with friends?",
+      "selectedAnswer": "Movie marathon with homemade snacks",
+      "answerAuthorId": "p2",
+      "activeGuesserIndex": 0,
+      "players": [
+        { "id": "p1", "name": "Alice", "score": 0, "avatar": "🦊" },
+        { "id": "p2", "name": "Bob", "score": 120, "avatar": "🐸" },
+        { "id": "host-123", "name": "Game Master", "score": 0, "avatar": "🎧" }
+      ],
+      "answers": [
+        { "playerId": "p1", "playerName": "Alice", "text": "Board game tournament with pizza" },
+        { "playerId": "p2", "playerName": "Bob", "text": "Movie marathon with homemade snacks" }
+      ],
+      "guesses": [
+        { "guesserId": "p1", "guesserName": "Alice", "guessedId": "p1", "guessedName": "Alice", "correct": false, "points": 0 }
+      ],
+      "roundResults": [
+        { "guesserName": "Alice", "guessedName": "Alice", "correct": false, "points": 0 }
+      ],
+      "hostId": "host-123",
+      "timeLeft": 0,
+      "language": "en",
+      "guessTimeoutSeconds": 30,
+      "guessDeadlineMs": null,
+      "guessCountdownEndsAt": null,
+      "remainingAuthorIds": []
+    }
+  },
+  "round-end-no-guess": {
+    "label": "Round End - Spectator View (No Overlay)",
+    "role": "player",
+    "playerId": "p2",
+    "playerName": "Bob",
+    "roomCode": "DEMO1",
+    "state": {
+      "code": "DEMO1",
+      "phase": "round-end",
+      "answerRoundNumber": 1,
+      "question": "What is the most creative way to spend a rainy Sunday with friends?",
+      "selectedAnswer": "Movie marathon with homemade snacks",
+      "answerAuthorId": "p2",
+      "activeGuesserIndex": 0,
+      "players": [
+        { "id": "p1", "name": "Alice", "score": 120, "avatar": "🦊" },
+        { "id": "p2", "name": "Bob", "score": 0, "avatar": "🐸" },
+        { "id": "host-123", "name": "Game Master", "score": 0, "avatar": "🎧" }
+      ],
+      "answers": [
+        { "playerId": "p1", "playerName": "Alice", "text": "Board game tournament with pizza" },
+        { "playerId": "p2", "playerName": "Bob", "text": "Movie marathon with homemade snacks" }
+      ],
+      "guesses": [
+        { "guesserId": "p1", "guesserName": "Alice", "guessedId": "p2", "guessedName": "Bob", "correct": true, "points": 120 }
+      ],
+      "roundResults": [
+        { "guesserName": "Alice", "guessedName": "Bob", "correct": true, "points": 120 }
+      ],
+      "hostId": "host-123",
+      "timeLeft": 0,
+      "language": "en",
+      "guessTimeoutSeconds": 30,
+      "guessDeadlineMs": null,
+      "guessCountdownEndsAt": null,
+      "remainingAuthorIds": []
+    }
+  },
+  "game-end": {
+    "label": "Game End - Final Leaderboard",
+    "role": "player",
+    "playerId": "p1",
+    "playerName": "Alice",
+    "roomCode": "DEMO1",
+    "state": {
+      "code": "DEMO1",
+      "phase": "game-end",
+      "answerRoundNumber": 2,
+      "question": "",
+      "selectedAnswer": "",
+      "answerAuthorId": null,
+      "activeGuesserIndex": 0,
+      "players": [
+        { "id": "p1", "name": "Alice", "score": 360, "avatar": "🦊" },
+        { "id": "p2", "name": "Bob", "score": 240, "avatar": "🐸" },
+        { "id": "host-123", "name": "Game Master", "score": 120, "avatar": "🎧" }
+      ],
+      "answers": [],
+      "guesses": [],
+      "roundResults": [],
+      "hostId": "host-123",
+      "timeLeft": 0,
+      "language": "en",
+      "guessTimeoutSeconds": 30,
+      "guessDeadlineMs": null,
+      "guessCountdownEndsAt": null,
+      "remainingAuthorIds": []
+    }
+  },
+  "host-managing": {
+    "label": "Host Managing - Multiple Guesses",
+    "role": "host",
+    "playerId": "host-123",
+    "playerName": "Game Master",
+    "roomCode": "DEMO1",
+    "state": {
+      "code": "DEMO1",
+      "phase": "guessing",
+      "answerRoundNumber": 1,
+      "question": "What is the most creative way to spend a rainy Sunday with friends?",
+      "selectedAnswer": "Movie marathon with homemade snacks",
+      "answerAuthorId": "p2",
+      "activeGuesserIndex": 1,
+      "players": [
+        { "id": "host-123", "name": "Game Master", "score": 0, "avatar": "🎧" },
+        { "id": "p1", "name": "Alice", "score": 120, "avatar": "🦊" },
+        { "id": "p2", "name": "Bob", "score": 0, "avatar": "🐸" }
+      ],
+      "answers": [
+        { "playerId": "p1", "playerName": "Alice", "text": "Board game tournament with pizza" },
+        { "playerId": "p2", "playerName": "Bob", "text": "Movie marathon with homemade snacks" }
+      ],
+      "guesses": [
+        { "guesserId": "p1", "guesserName": "Alice", "guessedId": "p2", "guessedName": "Bob", "correct": true, "points": 120 }
+      ],
+      "roundResults": [],
+      "hostId": "host-123",
+      "timeLeft": 22,
+      "language": "en",
+      "guessTimeoutSeconds": 30,
+      "guessDeadlineMs": 1725187222000,
+      "guessCountdownEndsAt": 1725187222000,
+      "remainingAuthorIds": ["p2"]
+    }
+  }
+}

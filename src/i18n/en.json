@@ -172,6 +172,15 @@
   "roundEnd.nextRound": "Next round",
   "roundEnd.goToFinalBoard": "Go to final score board",
 
+  "resultOverlay.greatGuess": "GREAT GUESS!",
+  "resultOverlay.youWereCorrect": "YOU WERE CORRECT!",
+  "resultOverlay.veryWellDone": "VERY WELL DONE!",
+  "resultOverlay.excellent": "EXCELLENT!",
+  "resultOverlay.wrongGuess": "WRONG GUESS",
+  "resultOverlay.badGuess": "BAD GUESS",
+  "resultOverlay.youMissedIt": "YOU MISSED IT",
+  "resultOverlay.notSoCleverGuess": "NOT SO CLEVER GUESS",
+
   "gameEnd.complete": "Game complete",
   "gameEnd.finished": "🎉 Game finished!",
   "gameEnd.topPerformers": "Top performers",

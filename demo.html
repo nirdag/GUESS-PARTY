@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Guess Party - Demo Mode</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      html, body {
+        margin: 0;
+        padding: 0;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background: #0d1226;
+        color: #f5f7ff;
+      }
+      .demo-controls {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 999;
+        background: #171f3b;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 12px 16px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+      }
+      .demo-controls label {
+        font-weight: 600;
+        font-size: 14px;
+        color: #b8c2e8;
+        white-space: nowrap;
+      }
+      .demo-controls select {
+        padding: 8px 12px;
+        border-radius: 8px;
+        border: 1px solid rgba(124, 156, 255, 0.3);
+        background: rgba(15, 21, 37, 0.7);
+        color: white;
+        font-weight: 500;
+        cursor: pointer;
+        flex: 1;
+        max-width: 400px;
+      }
+      .demo-controls select:hover {
+        border-color: rgba(124, 156, 255, 0.6);
+      }
+      .demo-controls select:focus {
+        outline: none;
+        border-color: rgba(124, 156, 255, 0.8);
+        box-shadow: 0 0 0 3px rgba(124, 156, 255, 0.15);
+      }
+      .demo-controls .info {
+        margin-left: auto;
+        font-size: 12px;
+        color: #7c9cff;
+        white-space: nowrap;
+      }
+      #app {
+        margin-top: 50px;
+        min-height: calc(100vh - 50px);
+      }
+      .demo-error {
+        margin: 20px;
+        padding: 16px;
+        border-radius: 12px;
+        background: rgba(248, 113, 113, 0.1);
+        border: 1px solid rgba(248, 113, 113, 0.3);
+        color: #f87171;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="demo-controls">
+      <label for="state-select">Demo State:</label>
+      <select id="state-select">
+        <option value="">Select a game state...</option>
+      </select>
+      <span class="info">📌 Demo Mode</span>
+    </div>
+    <div id="app"></div>
+
+    <script>
+      // Demo mode detection and state loading
+      const params = new URLSearchParams(window.location.search);
+      const demoState = params.get('state');
+      
+      window.__DEMO_MODE__ = true;
+      window.__DEMO_STATE__ = demoState;
+
+      // Populate dropdown and handle selection
+      async function initDemoControls() {
+        try {
+          // Try multiple possible paths for demo-states.json
+          let response;
+          const pathsToTry = [
+            '/demo-states.json',
+            './demo-states.json',
+            '../demo-states.json'
+          ];
+          
+          for (const path of pathsToTry) {
+            try {
+              response = await fetch(path);
+              if (response.ok) {
+                console.log(`✅ Loaded demo states from: ${path}`);
+                break;
+              }
+            } catch (e) {
+              // Try next path
+            }
+          }
+          
+          if (!response || !response.ok) {
+            throw new Error(`Failed to load demo-states.json from any path: ${pathsToTry.join(', ')}`);
+          }
+          
+          const demoStates = await response.json();
+          const select = document.getElementById('state-select');
+
+          const entries = Object.entries(demoStates);
+          console.log(`📋 Found ${entries.length} demo states:`, Object.keys(demoStates));
+
+          entries.forEach(([key, value]) => {
+            const option = document.createElement('option');
+            option.value = key;
+            option.textContent = value.label || key;
+            if (key === demoState) {
+              option.selected = true;
+            }
+            select.appendChild(option);
+          });
+
+          if (entries.length === 0) {
+            const errorOption = document.createElement('option');
+            errorOption.textContent = '❌ No states found in demo-states.json';
+            errorOption.disabled = true;
+            select.appendChild(errorOption);
+          }
+
+          select.addEventListener('change', (e) => {
+            const selectEl = e.target;
+            if (selectEl.value) {
+              window.location.href = `?state=${selectEl.value}`;
+            }
+          });
+        } catch (error) {
+          console.error('❌ Failed to load demo states:', error);
+          const select = document.getElementById('state-select');
+          const errorOption = document.createElement('option');
+          errorOption.textContent = `❌ Error: ${error instanceof Error ? error.message : String(error)}`;
+          errorOption.disabled = true;
+          select.appendChild(errorOption);
+        }
+      }
+
+      initDemoControls();
+    </script>
+
+    <!-- Load the actual app -->
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

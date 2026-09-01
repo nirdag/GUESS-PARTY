@@ -172,6 +172,15 @@
   "roundEnd.nextRound": "הסבב הבא",
   "roundEnd.goToFinalBoard": "עבור לטבלת הניקוד הסופית",
 
+  "resultOverlay.greatGuess": "ניחוש מעולה!",
+  "resultOverlay.youWereCorrect": "ניחשת נכון!",
+  "resultOverlay.veryWellDone": "עבודה מעולה!",
+  "resultOverlay.excellent": "מדהים!",
+  "resultOverlay.wrongGuess": "ניחוש שגוי",
+  "resultOverlay.badGuess": "ניחוש רע",
+  "resultOverlay.youMissedIt": "פספסת את זה",
+  "resultOverlay.notSoCleverGuess": "לא כל כך חכם",
+
   "gameEnd.complete": "המשחק הסתיים",
   "gameEnd.finished": "🎉 המשחק הסתיים!",
   "gameEnd.topPerformers": "המצטיינים",

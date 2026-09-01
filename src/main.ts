@@ -288,6 +288,78 @@ function formatScore(value: number): string {
   return t('common.scorePts', { value })
 }
 
+function getRandomResultMessage(isCorrect: boolean): string {
+  const correctMessages = [
+    'resultOverlay.greatGuess',
+    'resultOverlay.youWereCorrect',
+    'resultOverlay.veryWellDone',
+    'resultOverlay.excellent',
+  ]
+  const incorrectMessages = [
+    'resultOverlay.wrongGuess',
+    'resultOverlay.badGuess',
+    'resultOverlay.youMissedIt',
+    'resultOverlay.notSoCleverGuess',
+  ]
+  const messages = isCorrect ? correctMessages : incorrectMessages
+  return t(messages[Math.floor(Math.random() * messages.length)])
+}
+
+function playCelebrationSound(isCorrect: boolean): void {
+  try {
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+    const now = audioContext.currentTime
+    const duration = 0.3
+    
+    // Create an oscillator for the tone
+    const oscillator = audioContext.createOscillator()
+    const gainNode = audioContext.createGain()
+    
+    oscillator.connect(gainNode)
+    gainNode.connect(audioContext.destination)
+    
+    if (isCorrect) {
+      // Success sound: ascending ding (800Hz to 1000Hz)
+      oscillator.frequency.setValueAtTime(800, now)
+      oscillator.frequency.exponentialRampToValueAtTime(1000, now + duration * 0.6)
+      oscillator.frequency.setValueAtTime(1000, now + duration * 0.6)
+      oscillator.frequency.exponentialRampToValueAtTime(800, now + duration)
+    } else {
+      // Failure sound: descending buzz (300Hz to 150Hz)
+      oscillator.frequency.setValueAtTime(300, now)
+      oscillator.frequency.exponentialRampToValueAtTime(150, now + duration)
+    }
+    
+    // Envelope: quick attack, natural decay
+    gainNode.gain.setValueAtTime(0.3, now)
+    gainNode.gain.exponentialRampToValueAtTime(0.01, now + duration)
+    
+    oscillator.start(now)
+    oscillator.stop(now + duration)
+  } catch {
+    // Audio context not available or blocked by browser, silently fail
+  }
+}
+
+function renderResultCelebrationOverlay(isCorrect: boolean, points: number): string {
+  const message = getRandomResultMessage(isCorrect)
+  const confettiParticles = isCorrect
+    ? Array.from({ length: 15 }, (_, i) => `<div class="confetti-particle" style="left: ${Math.random() * 100}%; top: ${Math.random() * 100}%; --delay: ${i * 30}ms; --duration: ${2000 + Math.random() * 500}ms;"></div>`)
+        .join('')
+    : ''
+
+  return `
+    <div class="celebration-overlay celebration-overlay--${isCorrect ? 'success' : 'fail'}">
+      <div class="celebration-overlay-backdrop"></div>
+      <div class="celebration-overlay-content">
+        <div class="celebration-overlay-text">${message}</div>
+        ${isCorrect ? `<div class="celebration-overlay-points">+${points} pts</div>` : ''}
+        ${confettiParticles}
+      </div>
+    </div>
+  `
+}
+
 function renderGuessTimerBox(fallbackLabel: string): string {
   if (state.phase === 'guessing' && state.guessDeadlineMs) {
     const secondsLeft = Math.max(0, Math.ceil((state.guessDeadlineMs - Date.now()) / 1000))
@@ -1664,9 +1736,12 @@ function renderPlayerGuessing(): void {
 
 function renderRoundEnd(): void {
   const sortedPlayers = [...state.players].sort((a, b) => b.score - a.score)
+  const myResult = state.roundResults.find((result) => result.guesserName === getCurrentPlayer()?.name)
+  const showCelebrationOverlay = myResult !== undefined
 
   root.innerHTML = `
     <main class="shell">
+      ${showCelebrationOverlay ? renderResultCelebrationOverlay(myResult.correct, myResult.points) : ''}
       ${renderIdentityBanner()}
       <section class="panel summary-panel">
         <p class="eyebrow">${t('roundEnd.complete')}</p>
@@ -1718,7 +1793,6 @@ function renderRoundEnd(): void {
         </div>
 
         ${(() => {
-          const myResult = state.roundResults.find((result) => result.guesserName === getCurrentPlayer()?.name)
           if (!myResult) {
             return ''
           }
@@ -1729,6 +1803,11 @@ function renderRoundEnd(): void {
       </section>
     </main>
   `
+
+  // Trigger celebration sound and animation only for current player who guessed
+  if (showCelebrationOverlay && myResult) {
+    playCelebrationSound(myResult.correct)
+  }
 
   root.querySelector<HTMLButtonElement>('[data-role="next-round"]')?.addEventListener('click', () => {
     advanceAnswer()
@@ -1863,6 +1942,12 @@ function renderApp(): void {
 }
 
 function connectSocket(): void {
+  // Skip WebSocket connection in demo mode
+  if ((window as any).__DEMO_MODE__) {
+    console.log('⚠️ WebSocket skipped (demo mode)')
+    return
+  }
+
   socket = new WebSocket(buildSocketUrl())
 
   socket.addEventListener('open', () => {
@@ -1973,7 +2058,10 @@ function connectSocket(): void {
   })
 }
 
-connectSocket()
+// Initialize WebSocket connection (skip in demo mode)
+if (!(window as any).__DEMO_MODE__) {
+  connectSocket()
+}
 
 window.addEventListener('pagehide', () => {
   isPageUnloading = true
@@ -2019,7 +2107,90 @@ function initializeRoomLinkIfProvided(): void {
   }
 }
 
-consumeEmailVerificationLink().finally(() => {
-  initializeRoomLinkIfProvided()
-  renderApp()
-})
+async function initializeDemoMode(): Promise<void> {
+  if (!(window as any).__DEMO_MODE__) {
+    return
+  }
+
+  const demoStateKey = (window as any).__DEMO_STATE__
+  if (!demoStateKey) {
+    return
+  }
+
+  try {
+    const response = await fetch('/demo-states.json')
+    const allDemoStates: Record<string, any> = await response.json()
+    const demoConfig = allDemoStates[demoStateKey]
+
+    if (!demoConfig || !demoConfig.state) {
+      console.error(`Demo state "${demoStateKey}" not found`)
+      return
+    }
+
+    const demoRoomState = demoConfig.state
+
+    // Set player session info from demo config
+    state.role = demoConfig.role
+    state.currentPlayerId = demoConfig.playerId
+    state.playerName = demoConfig.playerName
+    state.roomCode = demoConfig.roomCode
+    state.myAvatar = demoConfig.state.players.find((p: Player) => p.id === demoConfig.playerId)?.avatar || '🎭'
+
+    // Merge demo room state into app state
+    state.phase = demoRoomState.phase
+    state.answerRoundNumber = demoRoomState.answerRoundNumber
+    state.question = demoRoomState.question
+    state.selectedAnswer = demoRoomState.selectedAnswer
+    state.answerAuthorId = demoRoomState.answerAuthorId
+    state.activeGuesserIndex = demoRoomState.activeGuesserIndex
+    state.players = demoRoomState.players
+    state.answers = demoRoomState.answers
+    state.guesses = demoRoomState.guesses
+    state.roundResults = demoRoomState.roundResults
+    state.timeLeft = demoRoomState.timeLeft
+    state.language = demoRoomState.language
+    state.guessTimeoutSeconds = demoRoomState.guessTimeoutSeconds
+    
+    // For guessing phases, compute realistic future deadlines (not static JSON timestamps)
+    if (demoRoomState.phase === 'guessing' && demoRoomState.guessCountdownEndsAt) {
+      // timeLeft tells us how many seconds remain
+      const futureDeadline = Date.now() + (state.timeLeft * 1000)
+      state.guessDeadlineMs = futureDeadline
+      state.guessCountdownEndsAt = futureDeadline
+    } else {
+      state.guessDeadlineMs = demoRoomState.guessDeadlineMs
+      state.guessCountdownEndsAt = demoRoomState.guessCountdownEndsAt
+    }
+    
+    state.remainingAuthorIds = demoRoomState.remainingAuthorIds
+
+    // Set screen based on phase
+    const phaseToScreen: Record<string, Screen> = {
+      'lobby': 'lobby',
+      'answer-collection': 'host-managing',
+      'guessing': state.role === 'host' ? 'host-managing' : 'player-guessing',
+      'round-end': 'round-end',
+      'game-end': 'game-end',
+    }
+    state.screen = phaseToScreen[demoRoomState.phase] || 'welcome'
+
+    // Set language
+    setLanguage(demoRoomState.language)
+
+    // Start countdown timers for guessing phases
+    if (state.phase === 'guessing' && state.guessCountdownEndsAt) {
+      manageGuessCountdown()
+    }
+
+    console.log(`✅ Demo mode loaded: ${demoConfig.label}`)
+  } catch (error) {
+    console.error('Failed to initialize demo mode:', error)
+  }
+}
+
+consumeEmailVerificationLink()
+  .then(() => initializeDemoMode())
+  .finally(() => {
+    initializeRoomLinkIfProvided()
+    renderApp()
+  })

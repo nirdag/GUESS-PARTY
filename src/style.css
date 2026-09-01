@@ -641,6 +641,162 @@ h1 {
   }
 }
 
+@keyframes celebration-success-pop {
+  0% {
+    transform: scale(0.3);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes celebration-failure-shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  10%, 30%, 50%, 70%, 90% {
+    transform: translateX(-10px);
+  }
+  20%, 40%, 60%, 80% {
+    transform: translateX(10px);
+  }
+}
+
+@keyframes celebration-hold {
+  0%, 100% {
+    opacity: 1;
+  }
+}
+
+@keyframes celebration-fade-out {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+
+@keyframes confetti-fall {
+  0% {
+    transform: translateY(0) rotateZ(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(100vh) rotateZ(720deg);
+    opacity: 0;
+  }
+}
+
+.celebration-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.celebration-overlay-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 1;
+}
+
+.celebration-overlay-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: auto;
+}
+
+.celebration-overlay--success {
+  animation: celebration-fade-out 4.2s ease-out forwards;
+}
+
+.celebration-overlay--success .celebration-overlay-backdrop {
+  background: rgba(74, 222, 128, 0.15);
+}
+
+.celebration-overlay--success .celebration-overlay-text {
+  color: #4ade80;
+  text-shadow: 0 0 30px rgba(74, 222, 128, 0.6);
+  animation: celebration-success-pop 1.2s cubic-bezier(0.34, 1.56, 0.64, 1) forwards,
+             celebration-hold 1.5s ease-out 1.2s forwards,
+             celebration-fade-out 1.5s ease-out 2.7s forwards;
+}
+
+.celebration-overlay--success .celebration-overlay-points {
+  color: rgba(74, 222, 128, 0.8);
+  text-shadow: 0 0 15px rgba(74, 222, 128, 0.4);
+  animation: celebration-hold 2.7s ease-out 1.2s forwards,
+             celebration-fade-out 1.5s ease-out 2.7s forwards;
+}
+
+.celebration-overlay--fail {
+  animation: celebration-fade-out 4.2s ease-out forwards;
+}
+
+.celebration-overlay--fail .celebration-overlay-backdrop {
+  background: rgba(248, 113, 113, 0.15);
+}
+
+.celebration-overlay--fail .celebration-overlay-text {
+  color: #f87171;
+  text-shadow: 0 0 30px rgba(248, 113, 113, 0.5);
+  animation: celebration-failure-shake 1.2s ease-out forwards,
+             celebration-hold 1.5s ease-out 1.2s forwards,
+             celebration-fade-out 1.5s ease-out 2.7s forwards;
+}
+
+.celebration-overlay-text {
+  font-size: clamp(3rem, 12vw, 7rem);
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+  margin-bottom: 12px;
+}
+
+.celebration-overlay-points {
+  font-size: clamp(1.5rem, 5vw, 2.5rem);
+  font-weight: 700;
+  margin-top: 20px;
+}
+
+.confetti-particle {
+  position: fixed;
+  width: 25px;
+  height: 25px;
+  background: transparent;
+  pointer-events: none;
+  z-index: 999;
+}
+
+.confetti-particle::before {
+  content: '';
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, #4ade80, #86efac);
+  border-radius: 2px;
+  animation: confetti-fall var(--duration) ease-in forwards;
+  animation-delay: var(--delay);
+}
+
 .answer-reveal {
   display: grid;
   gap: 8px;
