@@ -33,6 +33,8 @@
   "hostSetup.guessTimeHint": "Players have this long to lock in a guess before the round moves on automatically.",
   "hostSetup.decreaseGuessTime": "Decrease guess time",
   "hostSetup.increaseGuessTime": "Increase guess time",
+  "hostSetup.addSelfLabel": "Play as a participant",
+  "hostSetup.addSelfHint": "You'll be included in answering, guessing, and the score board, and can be asked to submit a question yourself.",
   "hostSetup.submit": "Create room",
   "hostSetup.back": "Back",
 
@@ -158,6 +160,16 @@
 
   "guessIntro.getReady": "Get ready to guess!",
 
+  "askQuestion.overlayEyebrow": "Your turn",
+  "askQuestion.overlayTitle": "You are the asker of the next question!",
+  "askQuestion.overlayConfirm": "Got it, let's write it",
+  "askQuestion.title": "Write the next question",
+  "askQuestion.submit": "Ask this question",
+  "askQuestion.askedBy": "Asked by {name}",
+
+  "waitingForQuestion.eyebrow": "Waiting",
+  "waitingForQuestion.message": "The game is waiting on {name} to submit the next question",
+
   "roundEnd.complete": "Round complete",
   "roundEnd.standings": "Round standings",
   "roundEnd.results": "Round results",
@@ -180,14 +192,17 @@
   "resultOverlay.badGuess": "BAD GUESS",
   "resultOverlay.youMissedIt": "YOU MISSED IT",
   "resultOverlay.notSoCleverGuess": "NOT SO CLEVER GUESS",
+  "resultOverlay.noGuess": "You didn't submit a guess. Please join back in the next round.",
 
-  "gameEnd.complete": "Game complete",
-  "gameEnd.finished": "🎉 Game finished!",
-  "gameEnd.topPerformers": "Top performers",
+  "gameEnd.complete": "Question complete",
+  "gameEnd.finished": "All guessing rounds finished!",
+  "gameEnd.topPerformers": "Results for this round",
   "gameEnd.gold": "🥇 Gold",
   "gameEnd.silver": "🥈 Silver",
   "gameEnd.bronze": "🥉 Bronze",
-  "gameEnd.newGame": "Start a new game",
+  "gameEnd.newGame": "Ask another question",
+  "gameEnd.continueNextQuestion": "Continue to next question",
+  "gameEnd.nextAsker": "Next asker is {name}",
 
   "prompts.enterPlayerName": "Enter your player name",
   "prompts.enterRoomCode": "Enter the room code",

@@ -3,7 +3,7 @@ import QRCode from 'qrcode'
 import { type LanguageCode, getLanguage, languages, setLanguage, t } from './i18n'
 
 type Role = 'host' | 'player'
-type Screen = 'welcome' | 'membership' | 'host-setup' | 'join-setup' | 'lobby' | 'host-managing' | 'player-answering' | 'player-guessing' | 'round-end' | 'game-end' | 'admin-login' | 'admin-gallery'
+type Screen = 'welcome' | 'membership' | 'host-setup' | 'join-setup' | 'lobby' | 'host-managing' | 'player-answering' | 'player-guessing' | 'round-end' | 'game-end' | 'admin-login' | 'admin-gallery' | 'ask-question' | 'waiting-for-question'
 
 type Account = {
   id: string
@@ -50,7 +50,7 @@ type RoundResult = {
 
 type RoomState = {
   code: string
-  phase: 'lobby' | 'answer-collection' | 'guessing' | 'round-end' | 'game-end'
+  phase: 'lobby' | 'asking' | 'answer-collection' | 'guessing' | 'round-end' | 'game-end'
   answerRoundNumber: number
   question: string
   selectedAnswer: string
@@ -67,6 +67,9 @@ type RoomState = {
   guessDeadlineMs: number | null
   guessCountdownEndsAt: number | null
   remainingAuthorIds: string[]
+  hostIsPlayer: boolean
+  askingPlayerId: string | null
+  pendingNextAskerId: string | null
 }
 
 const app = document.querySelector<HTMLDivElement>('#app')
@@ -174,6 +177,12 @@ const state = {
   guessDeadlineMs: null as number | null,
   guessCountdownEndsAt: null as number | null,
   remainingAuthorIds: [] as string[],
+  hostIsPlayer: false,
+  askingPlayerId: null as string | null,
+  pendingNextAskerId: null as string | null,
+  addSelfAsPlayer: false,
+  askerOverlayConfirmed: false,
+  askQuestionDraft: '',
   adminError: '',
   adminLanguageFilter: 'en' as LanguageCode,
   adminQuestions: [] as GalleryQuestion[],
@@ -341,19 +350,22 @@ function playCelebrationSound(isCorrect: boolean): void {
   }
 }
 
-function renderResultCelebrationOverlay(isCorrect: boolean, points: number): string {
-  const message = getRandomResultMessage(isCorrect)
-  const confettiParticles = isCorrect
+type ResultOverlayKind = 'success' | 'fail' | 'no-guess'
+
+function renderResultCelebrationOverlay(kind: ResultOverlayKind, points = 0): string {
+  const isSuccess = kind === 'success'
+  const message = kind === 'no-guess' ? t('resultOverlay.noGuess') : getRandomResultMessage(isSuccess)
+  const confettiParticles = isSuccess
     ? Array.from({ length: 15 }, (_, i) => `<div class="confetti-particle" style="left: ${Math.random() * 100}%; top: ${Math.random() * 100}%; --delay: ${i * 30}ms; --duration: ${2000 + Math.random() * 500}ms;"></div>`)
         .join('')
     : ''
 
   return `
-    <div class="celebration-overlay celebration-overlay--${isCorrect ? 'success' : 'fail'}">
+    <div class="celebration-overlay celebration-overlay--${kind}">
       <div class="celebration-overlay-backdrop"></div>
       <div class="celebration-overlay-content">
         <div class="celebration-overlay-text">${message}</div>
-        ${isCorrect ? `<div class="celebration-overlay-points">+${points} pts</div>` : ''}
+        ${isSuccess ? `<div class="celebration-overlay-points">+${points} pts</div>` : ''}
         ${confettiParticles}
       </div>
     </div>
@@ -492,7 +504,14 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   state.guessDeadlineMs = serverState.guessDeadlineMs ?? null
   state.guessCountdownEndsAt = serverState.guessCountdownEndsAt ?? null
   state.remainingAuthorIds = serverState.remainingAuthorIds ?? state.remainingAuthorIds
+  state.hostIsPlayer = serverState.hostIsPlayer ?? state.hostIsPlayer
+  state.pendingNextAskerId = serverState.pendingNextAskerId ?? null
   state.hasSubmittedAnswer = state.answers.some((answer) => answer.playerId === state.currentPlayerId)
+
+  if (serverState.askingPlayerId !== undefined && serverState.askingPlayerId !== state.askingPlayerId) {
+    state.askingPlayerId = serverState.askingPlayerId
+    state.askerOverlayConfirmed = false
+  }
 
   if (serverState.language) {
     state.language = serverState.language
@@ -515,12 +534,20 @@ function applyRoomState(serverState: Partial<RoomState>): void {
     state.currentPlayerId = matchedPlayer?.id ?? state.players[0]?.id ?? state.currentPlayerId
   }
 
+  const isCurrentAsker = state.hostIsPlayer && state.currentPlayerId === state.askingPlayerId
+
   if (state.phase === 'lobby') {
     state.screen = 'lobby'
+  } else if (state.phase === 'asking') {
+    state.screen = isCurrentAsker ? 'ask-question' : 'waiting-for-question'
   } else if (state.phase === 'answer-collection') {
-    state.screen = state.role === 'host' ? 'host-managing' : 'player-answering'
+    state.screen = state.hostIsPlayer
+      ? (isCurrentAsker ? 'host-managing' : 'player-answering')
+      : (state.role === 'host' ? 'host-managing' : 'player-answering')
   } else if (state.phase === 'guessing') {
-    state.screen = state.role === 'host' ? 'host-managing' : 'player-guessing'
+    state.screen = state.hostIsPlayer
+      ? (isCurrentAsker ? 'host-managing' : 'player-guessing')
+      : (state.role === 'host' ? 'host-managing' : 'player-guessing')
   } else if (state.phase === 'round-end') {
     state.screen = 'round-end'
   } else if (state.phase === 'game-end') {
@@ -639,25 +666,26 @@ function renderGuessIntroOverlay(): string {
   `
 }
 
-function createRoomSession(name: string, language: LanguageCode, avatar: string, guessTimeoutSeconds: number): void {
+function createRoomSession(name: string, language: LanguageCode, avatar: string, guessTimeoutSeconds: number, addSelfAsPlayer: boolean): void {
   const nextName = name.trim() || t('prompts.defaultHostName')
   state.playerName = nextName
   state.role = 'host'
   state.language = language
   state.myAvatar = avatar
   state.guessTimeoutSeconds = guessTimeoutSeconds
+  state.addSelfAsPlayer = addSelfAsPlayer
   setLanguage(language)
   shouldRestoreRoomSession = false
   clearStoredRoomSession()
   state.screen = 'lobby'
 
   if (socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds }))
+    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds, addSelfAsPlayer }))
     return
   }
 
   queuedAction = () => {
-    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds }))
+    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds, addSelfAsPlayer }))
   }
 
   renderApp()
@@ -715,7 +743,9 @@ function startRound(): void {
     return
   }
 
-  if (state.role === 'host') {
+  const isAsker = state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host'
+
+  if (isAsker) {
     const questionText = state.customQuestion.trim()
 
     if (!questionText) {
@@ -730,6 +760,26 @@ function startRound(): void {
   }
 
   sendSocketMessage('start-round', { question: state.customQuestion.trim() })
+}
+
+function submitQuestion(questionText: string): void {
+  if (!state.roomCode) {
+    return
+  }
+
+  const trimmed = questionText.trim()
+
+  if (!trimmed) {
+    window.alert(t('prompts.typeQuestionFirst'))
+    return
+  }
+
+  if (trimmed.length < 8) {
+    window.alert(t('prompts.questionTooShort'))
+    return
+  }
+
+  sendSocketMessage('submit-question', { question: trimmed })
 }
 
 function revealAnswer(): void {
@@ -919,6 +969,11 @@ function renderHostSetup(): void {
             <button class="counter-button" type="button" data-role="guess-time-increase" aria-label="${t('hostSetup.increaseGuessTime')}">+</button>
           </div>
           <small class="field-hint">${t('hostSetup.guessTimeHint')}</small>
+          <label class="checkbox-field">
+            <input id="host-setup-add-self" type="checkbox" ${state.addSelfAsPlayer ? 'checked' : ''} />
+            <span>${t('hostSetup.addSelfLabel')}</span>
+          </label>
+          <small class="field-hint">${t('hostSetup.addSelfHint')}</small>
           <button class="primary-button" type="submit">${t('hostSetup.submit')}</button>
         </form>
 
@@ -959,7 +1014,8 @@ function renderHostSetup(): void {
     event.preventDefault()
     const name = root.querySelector<HTMLInputElement>('#host-setup-name')?.value ?? ''
     const language = (root.querySelector<HTMLSelectElement>('#host-setup-language')?.value ?? 'en') as LanguageCode
-    createRoomSession(name, language, state.selectedAvatar, state.guessTimeoutSeconds)
+    const addSelfAsPlayer = root.querySelector<HTMLInputElement>('#host-setup-add-self')?.checked ?? false
+    createRoomSession(name, language, state.selectedAvatar, state.guessTimeoutSeconds, addSelfAsPlayer)
   })
 }
 
@@ -1301,21 +1357,23 @@ function renderAdminGallery(): void {
 function renderLobby(): void {
   const leaderboard = [...state.players].sort((a, b) => b.score - a.score)
   const hostQuestionIsValid = state.customQuestion.trim().length >= 8
+  // In host-as-player rooms the game-start trigger belongs to the asker (always the host before the first round), not the host role itself.
+  const isAsker = state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host'
 
   root.innerHTML = `
     <main class="shell">
       ${renderIdentityBanner()}
       <section class="panel hero-panel">
         <div class="hero-copy">
-          <p class="eyebrow">${state.role === 'host' ? t('lobby.hostView') : t('lobby.playerView')}</p>
-          <h1>${state.role === 'host' ? t('lobby.roomReady') : t('lobby.waitingInRoom')}</h1>
+          <p class="eyebrow">${isAsker ? t('lobby.hostView') : t('lobby.playerView')}</p>
+          <h1>${isAsker ? t('lobby.roomReady') : t('lobby.waitingInRoom')}</h1>
           <p class="subtitle">${t('lobby.roomCodeLine', { code: state.roomCode })}</p>
         </div>
 
         <div class="room-card">
           <span class="chip">${t('lobby.roomCodeChip')}</span>
           <strong>${state.roomCode}</strong>
-          ${state.role === 'host'
+          ${isAsker
             ? `<button class="primary-button" type="button" data-role="start-round" ${hostQuestionIsValid ? '' : 'disabled'}>${t('lobby.startRound')}</button>`
             : `<div class="chip">${t('lobby.waitingForHost')}</div>`}
         </div>
@@ -1349,7 +1407,7 @@ function renderLobby(): void {
         </div>
       </section>
 
-      ${state.role === 'host'
+      ${isAsker
         ? `
           <section class="panel">
             <div class="section-head">
@@ -1502,9 +1560,151 @@ function renderLobby(): void {
   })
 }
 
+// Only meaningful in host-as-player rooms, where the question's author rotates each round.
+function renderQuestionAskerTag(): string {
+  if (!state.hostIsPlayer) {
+    return ''
+  }
+
+  const asker = state.players.find((player) => player.id === state.askingPlayerId)
+  if (!asker) {
+    return ''
+  }
+
+  return `<p class="asker-tag">${t('askQuestion.askedBy', { name: `${formatPlayerAvatar(asker)} ${asker.name}` })}</p>`
+}
+
+function renderAskQuestion(): void {
+  if (!state.askerOverlayConfirmed) {
+    root.innerHTML = `
+      <main class="shell">
+        ${renderIdentityBanner()}
+        <div class="asker-overlay" data-role="asker-overlay">
+          <section class="panel asker-overlay-panel">
+            <p class="eyebrow">${t('askQuestion.overlayEyebrow')}</p>
+            <h1>${t('askQuestion.overlayTitle')}</h1>
+            <button class="primary-button" type="button" data-role="confirm-asker">${t('askQuestion.overlayConfirm')}</button>
+          </section>
+        </div>
+      </main>
+    `
+
+    root.querySelector('[data-role="confirm-asker"]')?.addEventListener('click', () => {
+      state.askerOverlayConfirmed = true
+      renderApp()
+    })
+    return
+  }
+
+  root.innerHTML = `
+    <main class="shell">
+      ${renderIdentityBanner()}
+      <section class="panel">
+        <div class="section-head">
+          <h2>${t('askQuestion.title')}</h2>
+        </div>
+
+        <form id="ask-question-form" class="host-question-form">
+          <label for="ask-question-input">${t('lobby.questionLabel')}</label>
+          <textarea id="ask-question-input" rows="3" maxlength="220" placeholder="${t('lobby.questionPlaceholder')}">${state.askQuestionDraft}</textarea>
+          <div class="host-question-actions">
+            <button class="primary-button" type="submit">${t('askQuestion.submit')}</button>
+            <button class="ghost-button" type="button" data-role="browse-gallery">${t('lobby.browseGallery')}</button>
+          </div>
+        </form>
+
+        ${state.showQuestionGallery
+          ? `
+            <div class="result-list">
+              <div class="section-head">
+                <h2>${t('lobby.galleryTitle')}</h2>
+                <button class="ghost-button" type="button" data-role="close-gallery">${t('lobby.galleryClose')}</button>
+              </div>
+              ${state.galleryQuestions.length > 0
+                ? state.galleryQuestions
+                    .map(
+                      (question) => `
+                        <button type="button" class="result-row" data-role="select-gallery-question" data-question-text="${question.text.replace(/"/g, '&quot;')}">
+                          <span>${question.text}</span>
+                          <strong>${t('lobby.gallerySelect')}</strong>
+                        </button>
+                      `,
+                    )
+                    .join('')
+                : `<div class="result-row"><span>${t('lobby.galleryEmpty')}</span></div>`}
+            </div>
+            `
+          : ''}
+      </section>
+    </main>
+  `
+
+  const askQuestionForm = root.querySelector<HTMLFormElement>('#ask-question-form')
+  askQuestionForm?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const textarea = root.querySelector<HTMLTextAreaElement>('#ask-question-input')
+    submitQuestion(textarea?.value ?? '')
+  })
+
+  root.querySelector('[data-role="browse-gallery"]')?.addEventListener('click', () => {
+    state.askQuestionDraft = root.querySelector<HTMLTextAreaElement>('#ask-question-input')?.value ?? state.askQuestionDraft
+    void openQuestionGallery()
+  })
+
+  root.querySelector('[data-role="close-gallery"]')?.addEventListener('click', () => {
+    state.showQuestionGallery = false
+    renderApp()
+  })
+
+  root.querySelectorAll<HTMLButtonElement>('[data-role="select-gallery-question"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.askQuestionDraft = button.dataset.questionText ?? ''
+      state.showQuestionGallery = false
+      renderApp()
+    })
+  })
+}
+
+function renderWaitingForQuestion(): void {
+  const asker = state.players.find((player) => player.id === state.askingPlayerId)
+  const askerName = asker ? `${formatPlayerAvatar(asker)} ${asker.name}` : t('common.player')
+
+  root.innerHTML = `
+    <main class="shell">
+      ${renderIdentityBanner()}
+      <section class="panel summary-panel">
+        <p class="eyebrow">${t('waitingForQuestion.eyebrow')}</p>
+        <h1>${t('waitingForQuestion.message', { name: askerName })}</h1>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <h2>${t('lobby.leaderboard')}</h2>
+        </div>
+
+        <div class="leaderboard">
+          ${[...state.players]
+            .sort((a, b) => b.score - a.score)
+            .map(
+              (player, index) => `
+                <div class="leaderboard-row ${index === 0 ? 'winner' : ''}">
+                  <span>#${index + 1} ${formatPlayerAvatar(player)} ${player.name}</span>
+                  <strong>${formatScore(player.score)}</strong>
+                </div>
+              `,
+            )
+            .join('')}
+        </div>
+      </section>
+    </main>
+  `
+}
+
 function renderHostManaging(): void {
   const visiblePlayers = state.players.filter((player) => player.id !== state.currentPlayerId)
   const guessMap = new Map(state.guesses.map((guess) => [guess.guesserId, guess]))
+  // In host-as-player rooms, the current asker controls the round, not necessarily the host account.
+  const canControlRound = state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host'
 
   root.innerHTML = `
     <main class="shell">
@@ -1515,6 +1715,7 @@ function renderHostManaging(): void {
           <div>
             <p class="eyebrow">${t('hostManaging.round', { number: state.answerRoundNumber })}</p>
             <h1>${state.question}</h1>
+            ${renderQuestionAskerTag()}
           </div>
           ${state.phase === 'answer-collection' ? `<div class="timer-box">${t('hostManaging.answerCollection')}</div>` : renderGuessTimerBox(t('hostManaging.guessingPhase'))}
         </div>
@@ -1530,7 +1731,7 @@ function renderHostManaging(): void {
               <p>${t('hostManaging.answerCollection')}</p>
               <h2>${t('hostManaging.submittedCount', { count: state.answers.length })}</h2>
             </div>
-            <button class="primary-button" type="button" data-role="lock-answers" ${state.answers.length > 0 ? '' : 'disabled'}>${t('hostManaging.startGuessing')}</button>
+            ${canControlRound ? `<button class="primary-button" type="button" data-role="lock-answers" ${state.answers.length > 0 ? '' : 'disabled'}>${t('hostManaging.startGuessing')}</button>` : ''}
             `
           : `
             <div class="turn-box">
@@ -1551,9 +1752,7 @@ function renderHostManaging(): void {
                 })
                 .join('')}
             </div>
-            <div class="host-actions-row">
-              <button class="primary-button" type="button" data-role="calculate-score">${t('hostManaging.stopTimer')}</button>
-            </div>
+            ${canControlRound ? `<div class="host-actions-row"><button class="primary-button" type="button" data-role="calculate-score">${t('hostManaging.stopTimer')}</button></div>` : ''}
           `}
       </section>
 
@@ -1622,6 +1821,8 @@ function renderHostManaging(): void {
 
 function renderPlayerAnswering(): void {
   const alreadySubmitted = state.answers.some((entry) => entry.playerId === state.currentPlayerId)
+  // In host-as-player rooms, the current asker controls the round, not necessarily the host account.
+  const canControlRound = state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host'
 
   root.innerHTML = `
     <main class="shell">
@@ -1629,6 +1830,7 @@ function renderPlayerAnswering(): void {
       <section class="panel player-answer-panel">
         <p class="eyebrow">${t('hostManaging.round', { number: state.answerRoundNumber })}</p>
         <h1>${state.question}</h1>
+        ${renderQuestionAskerTag()}
 
         ${alreadySubmitted
           ? `
@@ -1646,6 +1848,9 @@ function renderPlayerAnswering(): void {
             <button class="primary-button" type="button" data-role="submit-answer">${t('playerAnswering.submitAnswer')}</button>
           `}
 
+        ${canControlRound
+          ? `<div class="host-actions-row"><button class="primary-button" type="button" data-role="lock-answers" ${state.answers.length > 0 ? '' : 'disabled'}>${t('hostManaging.startGuessing')}</button></div>`
+          : ''}
       </section>
     </main>
   `
@@ -1662,9 +1867,15 @@ function renderPlayerAnswering(): void {
     submitPlayerAnswer(value)
     renderApp()
   })
+
+  root.querySelector<HTMLButtonElement>('[data-role="lock-answers"]')?.addEventListener('click', () => {
+    lockAnswers()
+  })
 }
 
 function renderPlayerGuessing(): void {
+  // In host-as-player rooms, the current asker controls the round, not necessarily the host account.
+  const canControlRound = state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host'
   // Players already revealed as a correct answer in an earlier round are no longer valid guesses.
   const guessOptions = state.players.filter((player) => player.id !== state.currentPlayerId && state.remainingAuthorIds.includes(player.id))
   const selectedGuessId = state.selectedGuessId ?? state.guesses.find((entry) => entry.guesserId === state.currentPlayerId)?.guessedId ?? null
@@ -1682,6 +1893,7 @@ function renderPlayerGuessing(): void {
           <div>
             <p class="eyebrow">${t('hostManaging.round', { number: state.answerRoundNumber })}</p>
             <h1>${state.question}</h1>
+            ${renderQuestionAskerTag()}
           </div>
           ${renderGuessTimerBox(t('playerGuessing.guessingPhase'))}
         </div>
@@ -1721,6 +1933,10 @@ function renderPlayerGuessing(): void {
           <span>${selectedGuessId ? t('playerGuessing.yourPick') : t('playerGuessing.waitingForPick')}</span>
           <strong>${selectedGuessId ? guessOptions.find((player) => player.id === selectedGuessId)?.name ?? t('playerGuessing.selected') : t('playerGuessing.noSelectionYet')}</strong>
         </div>
+
+        ${canControlRound
+          ? `<div class="host-actions-row"><button class="primary-button" type="button" data-role="calculate-score">${t('hostManaging.stopTimer')}</button></div>`
+          : ''}
       </section>
     </main>
   `
@@ -1732,16 +1948,26 @@ function renderPlayerGuessing(): void {
       renderApp()
     })
   })
+
+  root.querySelector<HTMLButtonElement>('[data-role="calculate-score"]')?.addEventListener('click', () => {
+    calculateScores()
+  })
 }
 
 function renderRoundEnd(): void {
   const sortedPlayers = [...state.players].sort((a, b) => b.score - a.score)
   const myResult = state.roundResults.find((result) => result.guesserName === getCurrentPlayer()?.name)
-  const showCelebrationOverlay = myResult !== undefined
+  const isEligibleToGuess = state.role === 'player'
+    && state.currentPlayerId !== state.answerAuthorId
+    && state.currentPlayerId !== state.askingPlayerId
+  const overlayKind: ResultOverlayKind | null = myResult
+    ? myResult.correct ? 'success' : 'fail'
+    : isEligibleToGuess ? 'no-guess' : null
+  const canAdvanceRound = state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host'
 
   root.innerHTML = `
     <main class="shell">
-      ${showCelebrationOverlay ? renderResultCelebrationOverlay(myResult.correct, myResult.points) : ''}
+      ${overlayKind ? renderResultCelebrationOverlay(overlayKind, myResult?.points) : ''}
       ${renderIdentityBanner()}
       <section class="panel summary-panel">
         <p class="eyebrow">${t('roundEnd.complete')}</p>
@@ -1771,6 +1997,8 @@ function renderRoundEnd(): void {
           <strong>"${state.selectedAnswer}"</strong>
         </div>
 
+        ${renderQuestionAskerTag()}
+
         <div class="mini-card">
           <span>${t('roundEnd.writtenBy')}</span>
           <strong>${(() => {
@@ -1799,13 +2027,13 @@ function renderRoundEnd(): void {
           return `<div class="mini-card"><span>${myResult.correct ? t('roundEnd.earnedMore') : t('roundEnd.missedIt')}</span></div>`
         })()}
 
-        ${state.role === 'host' ? `<button class="primary-button next-round" type="button" data-role="next-round">${state.answerRoundNumber >= state.answers.length ? t('roundEnd.goToFinalBoard') : t('roundEnd.nextRound')}</button>` : ''}
+        ${canAdvanceRound ? `<button class="primary-button next-round" type="button" data-role="next-round">${state.answerRoundNumber >= state.answers.length ? t('roundEnd.goToFinalBoard') : t('roundEnd.nextRound')}</button>` : ''}
       </section>
     </main>
   `
 
-  // Trigger celebration sound and animation only for current player who guessed
-  if (showCelebrationOverlay && myResult) {
+  // Trigger result audio only for players who submitted a guess.
+  if (myResult) {
     playCelebrationSound(myResult.correct)
   }
 
@@ -1817,6 +2045,7 @@ function renderRoundEnd(): void {
 function renderGameEnd(): void {
   const sortedPlayers = [...state.players].sort((a, b) => b.score - a.score)
   const topThree = sortedPlayers.slice(0, 3)
+  const pendingNextAsker = state.players.find((player) => player.id === state.pendingNextAskerId)
 
   root.innerHTML = `
     <main class="shell">
@@ -1824,6 +2053,7 @@ function renderGameEnd(): void {
       <section class="panel summary-panel">
         <p class="eyebrow">${t('gameEnd.complete')}</p>
         <h1>${t('gameEnd.finished')}</h1>
+        <p class="subtitle">The host can ask another question to continue playing.</p>
 
         <div class="leaderboard">
           ${sortedPlayers
@@ -1858,7 +2088,9 @@ function renderGameEnd(): void {
         </div>
       </section>
 
-      ${state.role === 'host' ? `<button class="primary-button next-round" type="button" data-role="new-game">${t('gameEnd.newGame')}</button>` : ''}
+      ${pendingNextAsker ? `<section class="panel" role="status"><strong>${t('gameEnd.nextAsker', { name: pendingNextAsker.name })}</strong></section>` : ''}
+
+      ${state.role === 'host' ? `<button class="primary-button next-round" type="button" data-role="new-game">${state.hostIsPlayer ? t('gameEnd.continueNextQuestion') : t('gameEnd.newGame')}</button>` : ''}
     </main>
   `
 
@@ -1912,6 +2144,16 @@ function renderApp(): void {
 
   if (state.screen === 'lobby') {
     renderLobby()
+    return
+  }
+
+  if (state.screen === 'ask-question') {
+    renderAskQuestion()
+    return
+  }
+
+  if (state.screen === 'waiting-for-question') {
+    renderWaitingForQuestion()
     return
   }
 
@@ -2150,6 +2392,11 @@ async function initializeDemoMode(): Promise<void> {
     state.timeLeft = demoRoomState.timeLeft
     state.language = demoRoomState.language
     state.guessTimeoutSeconds = demoRoomState.guessTimeoutSeconds
+    state.hostIsPlayer = demoRoomState.hostIsPlayer ?? false
+    state.askingPlayerId = demoRoomState.askingPlayerId ?? null
+    state.pendingNextAskerId = demoRoomState.pendingNextAskerId ?? null
+    // Demo-only: lets a fixture show either the "your turn" overlay or the question form beneath it.
+    state.askerOverlayConfirmed = demoConfig.askerOverlayConfirmed ?? true
     
     // For guessing phases, compute realistic future deadlines (not static JSON timestamps)
     if (demoRoomState.phase === 'guessing' && demoRoomState.guessCountdownEndsAt) {
@@ -2164,15 +2411,23 @@ async function initializeDemoMode(): Promise<void> {
     
     state.remainingAuthorIds = demoRoomState.remainingAuthorIds
 
-    // Set screen based on phase
-    const phaseToScreen: Record<string, Screen> = {
-      'lobby': 'lobby',
-      'answer-collection': 'host-managing',
-      'guessing': state.role === 'host' ? 'host-managing' : 'player-guessing',
-      'round-end': 'round-end',
-      'game-end': 'game-end',
+    // Set screen based on phase, mirroring the asker-aware branching used for live rooms
+    const isDemoCurrentAsker = Boolean(state.hostIsPlayer) && state.currentPlayerId === state.askingPlayerId
+    if (demoRoomState.phase === 'lobby') {
+      state.screen = 'lobby'
+    } else if (demoRoomState.phase === 'asking') {
+      state.screen = isDemoCurrentAsker ? 'ask-question' : 'waiting-for-question'
+    } else if (demoRoomState.phase === 'answer-collection') {
+      state.screen = state.hostIsPlayer ? (isDemoCurrentAsker ? 'host-managing' : 'player-answering') : (state.role === 'host' ? 'host-managing' : 'player-answering')
+    } else if (demoRoomState.phase === 'guessing') {
+      state.screen = state.hostIsPlayer ? (isDemoCurrentAsker ? 'host-managing' : 'player-guessing') : (state.role === 'host' ? 'host-managing' : 'player-guessing')
+    } else if (demoRoomState.phase === 'round-end') {
+      state.screen = 'round-end'
+    } else if (demoRoomState.phase === 'game-end') {
+      state.screen = 'game-end'
+    } else {
+      state.screen = 'welcome'
     }
-    state.screen = phaseToScreen[demoRoomState.phase] || 'welcome'
 
     // Set language
     setLanguage(demoRoomState.language)

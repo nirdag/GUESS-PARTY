@@ -174,8 +174,42 @@
       "remainingAuthorIds": []
     }
   },
+  "round-end-no-guess-eligible": {
+    "label": "Round End - Eligible Player Did Not Guess (Yellow Overlay)",
+    "role": "player",
+    "playerId": "p1",
+    "playerName": "Alice",
+    "roomCode": "DEMO1",
+    "state": {
+      "code": "DEMO1",
+      "phase": "round-end",
+      "answerRoundNumber": 1,
+      "question": "What is the most creative way to spend a rainy Sunday with friends?",
+      "selectedAnswer": "Movie marathon with homemade snacks",
+      "answerAuthorId": "p2",
+      "activeGuesserIndex": 0,
+      "players": [
+        { "id": "p1", "name": "Alice", "score": 0, "avatar": "🦊" },
+        { "id": "p2", "name": "Bob", "score": 0, "avatar": "🐸" },
+        { "id": "host-123", "name": "Game Master", "score": 0, "avatar": "🎧" }
+      ],
+      "answers": [
+        { "playerId": "p1", "playerName": "Alice", "text": "Board game tournament with pizza" },
+        { "playerId": "p2", "playerName": "Bob", "text": "Movie marathon with homemade snacks" }
+      ],
+      "guesses": [],
+      "roundResults": [],
+      "hostId": "host-123",
+      "timeLeft": 0,
+      "language": "en",
+      "guessTimeoutSeconds": 30,
+      "guessDeadlineMs": null,
+      "guessCountdownEndsAt": null,
+      "remainingAuthorIds": []
+    }
+  },
   "round-end-no-guess": {
-    "label": "Round End - Spectator View (No Overlay)",
+    "label": "Round End - Answer Author View (No Overlay)",
     "role": "player",
     "playerId": "p2",
     "playerName": "Bob",
@@ -277,6 +311,178 @@
       "guessDeadlineMs": 1725187222000,
       "guessCountdownEndsAt": 1725187222000,
       "remainingAuthorIds": ["p2"]
+    }
+  },
+  "ask-question-overlay": {
+    "label": "Ask Question - Your Turn Overlay (Host-as-Player)",
+    "role": "player",
+    "playerId": "p1",
+    "playerName": "Alice",
+    "roomCode": "DEMO1",
+    "askerOverlayConfirmed": false,
+    "state": {
+      "code": "DEMO1",
+      "phase": "asking",
+      "answerRoundNumber": 0,
+      "question": "",
+      "selectedAnswer": "",
+      "answerAuthorId": null,
+      "activeGuesserIndex": 0,
+      "players": [
+        { "id": "host-123", "name": "Game Master", "score": 120, "avatar": "🎧" },
+        { "id": "p1", "name": "Alice", "score": 360, "avatar": "🦊" },
+        { "id": "p2", "name": "Bob", "score": 240, "avatar": "🐸" }
+      ],
+      "answers": [],
+      "guesses": [],
+      "roundResults": [],
+      "hostId": "host-123",
+      "timeLeft": 0,
+      "language": "en",
+      "guessTimeoutSeconds": 30,
+      "guessDeadlineMs": null,
+      "guessCountdownEndsAt": null,
+      "remainingAuthorIds": [],
+      "hostIsPlayer": true,
+      "askingPlayerId": "p1",
+      "pendingNextAskerId": null
+    }
+  },
+  "ask-question-form": {
+    "label": "Ask Question - Writing the Question (Host-as-Player)",
+    "role": "player",
+    "playerId": "p1",
+    "playerName": "Alice",
+    "roomCode": "DEMO1",
+    "askerOverlayConfirmed": true,
+    "state": {
+      "code": "DEMO1",
+      "phase": "asking",
+      "answerRoundNumber": 0,
+      "question": "",
+      "selectedAnswer": "",
+      "answerAuthorId": null,
+      "activeGuesserIndex": 0,
+      "players": [
+        { "id": "host-123", "name": "Game Master", "score": 120, "avatar": "🎧" },
+        { "id": "p1", "name": "Alice", "score": 360, "avatar": "🦊" },
+        { "id": "p2", "name": "Bob", "score": 240, "avatar": "🐸" }
+      ],
+      "answers": [],
+      "guesses": [],
+      "roundResults": [],
+      "hostId": "host-123",
+      "timeLeft": 0,
+      "language": "en",
+      "guessTimeoutSeconds": 30,
+      "guessDeadlineMs": null,
+      "guessCountdownEndsAt": null,
+      "remainingAuthorIds": [],
+      "hostIsPlayer": true,
+      "askingPlayerId": "p1",
+      "pendingNextAskerId": null
+    }
+  },
+  "waiting-for-question": {
+    "label": "Waiting For Question (Host-as-Player)",
+    "role": "player",
+    "playerId": "p2",
+    "playerName": "Bob",
+    "roomCode": "DEMO1",
+    "state": {
+      "code": "DEMO1",
+      "phase": "asking",
+      "answerRoundNumber": 0,
+      "question": "",
+      "selectedAnswer": "",
+      "answerAuthorId": null,
+      "activeGuesserIndex": 0,
+      "players": [
+        { "id": "host-123", "name": "Game Master", "score": 120, "avatar": "🎧" },
+        { "id": "p1", "name": "Alice", "score": 360, "avatar": "🦊" },
+        { "id": "p2", "name": "Bob", "score": 240, "avatar": "🐸" }
+      ],
+      "answers": [],
+      "guesses": [],
+      "roundResults": [],
+      "hostId": "host-123",
+      "timeLeft": 0,
+      "language": "en",
+      "guessTimeoutSeconds": 30,
+      "guessDeadlineMs": null,
+      "guessCountdownEndsAt": null,
+      "remainingAuthorIds": [],
+      "hostIsPlayer": true,
+      "askingPlayerId": "p1",
+      "pendingNextAskerId": null
+    }
+  },
+  "game-end-host-pending": {
+    "label": "Game End - Host View with Next-Asker Notice (Host-as-Player)",
+    "role": "host",
+    "playerId": "host-123",
+    "playerName": "Game Master",
+    "roomCode": "DEMO1",
+    "state": {
+      "code": "DEMO1",
+      "phase": "game-end",
+      "answerRoundNumber": 2,
+      "question": "",
+      "selectedAnswer": "",
+      "answerAuthorId": null,
+      "activeGuesserIndex": 0,
+      "players": [
+        { "id": "host-123", "name": "Game Master", "score": 120, "avatar": "🎧" },
+        { "id": "p1", "name": "Alice", "score": 360, "avatar": "🦊" },
+        { "id": "p2", "name": "Bob", "score": 240, "avatar": "🐸" }
+      ],
+      "answers": [],
+      "guesses": [],
+      "roundResults": [],
+      "hostId": "host-123",
+      "timeLeft": 0,
+      "language": "en",
+      "guessTimeoutSeconds": 30,
+      "guessDeadlineMs": null,
+      "guessCountdownEndsAt": null,
+      "remainingAuthorIds": [],
+      "hostIsPlayer": true,
+      "askingPlayerId": "p2",
+      "pendingNextAskerId": "p1"
+    }
+  },
+  "game-end-player-pending": {
+    "label": "Game End - Player View with Next-Asker Notice (Host-as-Player)",
+    "role": "player",
+    "playerId": "p2",
+    "playerName": "Bob",
+    "roomCode": "DEMO1",
+    "state": {
+      "code": "DEMO1",
+      "phase": "game-end",
+      "answerRoundNumber": 2,
+      "question": "",
+      "selectedAnswer": "",
+      "answerAuthorId": null,
+      "activeGuesserIndex": 0,
+      "players": [
+        { "id": "host-123", "name": "Game Master", "score": 120, "avatar": "🎧" },
+        { "id": "p1", "name": "Alice", "score": 360, "avatar": "🦊" },
+        { "id": "p2", "name": "Bob", "score": 240, "avatar": "🐸" }
+      ],
+      "answers": [],
+      "guesses": [],
+      "roundResults": [],
+      "hostId": "host-123",
+      "timeLeft": 0,
+      "language": "en",
+      "guessTimeoutSeconds": 30,
+      "guessDeadlineMs": null,
+      "guessCountdownEndsAt": null,
+      "remainingAuthorIds": [],
+      "hostIsPlayer": true,
+      "askingPlayerId": "p2",
+      "pendingNextAskerId": "p1"
     }
   }
 }

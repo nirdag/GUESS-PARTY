@@ -18,6 +18,8 @@ import {
   reconnectGracePeriodMs,
   startRound,
   startNewGame,
+  pickNextAsker,
+  continueToNextQuestion,
   emitGameEndedIfInProgress,
   makeRoomState,
   getEligibleGuessTargetIds,
@@ -1046,5 +1048,158 @@ describe('CRITICAL: Room Reconnection', () => {
     expireDisconnectedMemberships(Date.now());
 
     expect(findRoomByCode(room.code)).toBeUndefined();
+  });
+});
+
+describe('HIGH: Host-as-player mode', () => {
+  it('adds the host into players when addSelfAsPlayer is set, and not otherwise', () => {
+    const withSelf = createRoom({ hostName: 'Host', hostAccountId: 'host-account', addSelfAsPlayer: true });
+    expect(withSelf.hostIsPlayer).toBe(true);
+    expect(withSelf.players).toHaveLength(1);
+    expect(withSelf.players[0]).toMatchObject({ id: withSelf.hostId, name: 'Host', score: 0 });
+
+    const classic = createRoom({ hostName: 'Host', hostAccountId: 'host-account' });
+    expect(classic.hostIsPlayer).toBe(false);
+    expect(classic.players).toHaveLength(0);
+  });
+
+  it('makes the host the asker of the first question', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', addSelfAsPlayer: true });
+    addPlayerToRoom(room, 'Alice');
+
+    startRound(room, 'What is the best pizza topping?');
+
+    expect(room.askingPlayerId).toBe(room.hostId);
+    expect(room.lastAskerId).toBe(room.hostId);
+  });
+
+  it('assigns the host as asker at room creation, before the lobby button is ever pressed', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', addSelfAsPlayer: true });
+
+    expect(room.askingPlayerId).toBe(room.hostId);
+    expect(room.phase).toBe('lobby');
+  });
+
+  it('blocks starting a round with only the host and no other players', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', addSelfAsPlayer: true });
+
+    startRound(room, 'What is the best pizza topping?');
+
+    expect(room.phase).toBe('lobby');
+  });
+
+  it('excludes the asker from submitting an answer', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', addSelfAsPlayer: true });
+    addPlayerToRoom(room, 'Alice');
+    startRound(room, 'What is the best pizza topping?');
+
+    submitAnswer(room, room.askingPlayerId, 'Pepperoni');
+
+    expect(room.answers).toHaveLength(0);
+  });
+
+  it('excludes the asker from guess eligibility', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', addSelfAsPlayer: true });
+    addPlayerToRoom(room, 'Alice');
+    startRound(room, 'What is the best pizza topping?');
+
+    expect(getEligibleGuessTargetIds(room).has(room.askingPlayerId)).toBe(false);
+  });
+
+  describe('pickNextAsker tie-break', () => {
+    it('picks the outright score leader when there is no tie', () => {
+      const room = createTestRoom();
+      room.players = [createTestPlayer('a', 'Alice'), createTestPlayer('b', 'Bob')];
+      room.players[0].score = 50;
+      room.players[1].score = 100;
+      room.lastAskerId = null;
+
+      expect(pickNextAsker(room)).toBe('b');
+    });
+
+    it('excludes the most recently asked player among tied leaders', () => {
+      const room = createTestRoom();
+      room.players = [createTestPlayer('a', 'Alice'), createTestPlayer('b', 'Bob'), createTestPlayer('c', 'Carol')];
+      room.players.forEach((player) => { player.score = 100; });
+      room.lastAskerId = 'a';
+
+      expect(pickNextAsker(room)).not.toBe('a');
+    });
+
+    it('falls back to the last asker when they are the only leader', () => {
+      const room = createTestRoom();
+      room.players = [createTestPlayer('a', 'Alice'), createTestPlayer('b', 'Bob')];
+      room.players[0].score = 100;
+      room.players[1].score = 50;
+      room.lastAskerId = 'a';
+
+      expect(pickNextAsker(room)).toBe('a');
+    });
+  });
+
+  it('continueToNextQuestion hands the ask duty to the leader without resetting scores', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', addSelfAsPlayer: true });
+    const alice = addPlayerToRoom(room, 'Alice');
+    startRound(room, 'What is the best pizza topping?');
+    alice.score = 500;
+
+    continueToNextQuestion(room);
+
+    expect(room.phase).toBe('asking');
+    expect(room.askingPlayerId).toBe(alice.id);
+    expect(alice.score).toBe(500);
+  });
+
+  it('announces the next asker at game end and clears it when continuing', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', addSelfAsPlayer: true });
+    const alice = addPlayerToRoom(room, 'Alice');
+    room.players[0].score = 100;
+    alice.score = 500;
+    room.phase = 'round-end';
+    room.answerQueue = [];
+
+    advanceGuessRound(room);
+
+    expect(room.pendingNextAskerId).toBe(alice.id);
+    expect(makeRoomState(room).pendingNextAskerId).toBe(alice.id);
+
+    continueToNextQuestion(room);
+
+    expect(room.pendingNextAskerId).toBeNull();
+  });
+
+  it('new-game continues to the next asker instead of resetting to lobby when hostIsPlayer is set', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', addSelfAsPlayer: true });
+    const alice = addPlayerToRoom(room, 'Alice');
+    startRound(room, 'What is the best pizza topping?');
+    alice.score = 500;
+
+    continueToNextQuestion(room);
+
+    expect(room.phase).not.toBe('lobby');
+  });
+
+  it('lets the newly assigned asker submit a question and start the round', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', addSelfAsPlayer: true });
+    const alice = addPlayerToRoom(room, 'Alice');
+    startRound(room, 'What is the best pizza topping?');
+    alice.score = 500;
+    continueToNextQuestion(room);
+
+    startRound(room, 'What is the best dessert?');
+
+    expect(room.phase).toBe('answer-collection');
+    expect(room.question).toBe('What is the best dessert?');
+  });
+
+  it('classic rooms are unaffected: host never appears in players and always asks', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account' });
+    addPlayerToRoom(room, 'Alice');
+
+    startRound(room, 'What is the best pizza topping?');
+
+    expect(room.players.some((player) => player.id === room.hostId)).toBe(false);
+    expect(room.askingPlayerId).toBeNull();
+    expect(getEligibleGuessTargetIds(room).has(room.hostId)).toBe(false);
   });
 });

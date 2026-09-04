@@ -25,9 +25,15 @@ The demo mode allows you to quickly visualize and test any game screen state wit
 | **player-guessing** | Player's guessing screen with countdown timer |
 | **round-end-correct** | Round end with celebration overlay (correct guess) |
 | **round-end-incorrect** | Round end with wrong guess overlay |
-| **round-end-no-guess** | Round end spectator view (no overlay, not a guesser) |
+| **round-end-no-guess-eligible** | Round end with yellow no-guess overlay for an eligible player |
+| **round-end-no-guess** | Round end answer-author view (no overlay, not eligible to guess) |
 | **game-end** | Final leaderboard screen |
 | **host-managing** | Host's view managing multiple guesses |
+| **ask-question-overlay** | Host-as-player: asker's "your turn" confirmation overlay |
+| **ask-question-form** | Host-as-player: asker writing the next question |
+| **waiting-for-question** | Host-as-player: non-asker waiting for the question |
+| **game-end-host-pending** | Game end (host-as-player): host view with "Continue to next question" plus the next-asker notice |
+| **game-end-player-pending** | Game end (host-as-player): player view showing only the next-asker notice |
 
 ## Features
 

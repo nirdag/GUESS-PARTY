@@ -226,6 +226,19 @@ button {
   margin-top: -4px;
 }
 
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: white;
+  font-weight: 600;
+}
+
+.checkbox-field input {
+  width: 18px;
+  height: 18px;
+}
+
 .membership-error {
   min-height: 24px;
   color: var(--secondary);
@@ -588,6 +601,32 @@ h1 {
   line-height: 1;
 }
 
+.asker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(13, 18, 38, 0.94);
+}
+
+.asker-overlay-panel {
+  display: grid;
+  gap: 16px;
+  justify-items: center;
+  text-align: center;
+  max-width: 420px;
+}
+
+.asker-tag {
+  color: var(--muted);
+  font-weight: 600;
+  margin: 0;
+}
+
+
 .guess-intro-number.pop {
   animation: intro-pop 0.5s ease-out;
 }
@@ -761,10 +800,30 @@ h1 {
              celebration-fade-out 1.5s ease-out 2.7s forwards;
 }
 
+.celebration-overlay--no-guess {
+  animation: celebration-fade-out 4.2s ease-out forwards;
+}
+
+.celebration-overlay--no-guess .celebration-overlay-backdrop {
+  background: rgba(250, 204, 21, 0.15);
+}
+
+.celebration-overlay--no-guess .celebration-overlay-text {
+  max-width: min(90vw, 760px);
+  color: #facc15;
+  text-shadow: 0 0 30px rgba(250, 204, 21, 0.5);
+  font-size: clamp(1.8rem, 6vw, 4.5rem);
+  line-height: 1.15;
+  text-transform: none;
+  white-space: normal;
+  animation: celebration-hold 2.7s ease-out forwards,
+             celebration-fade-out 1.5s ease-out 2.7s forwards;
+}
+
 .celebration-overlay-text {
   font-size: clamp(3rem, 12vw, 7rem);
   font-weight: 900;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
   line-height: 1;
   text-transform: uppercase;
   white-space: nowrap;

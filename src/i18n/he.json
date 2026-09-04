@@ -33,6 +33,8 @@
   "hostSetup.guessTimeHint": "לשחקנים יהיה הזמן הזה לנעול ניחוש לפני שהסבב ימשיך אוטומטית.",
   "hostSetup.decreaseGuessTime": "הפחת את זמן הניחוש",
   "hostSetup.increaseGuessTime": "הגדל את זמן הניחוש",
+  "hostSetup.addSelfLabel": "שחק כמשתתף",
+  "hostSetup.addSelfHint": "תיכלל בעניית השאלות, בניחושים ובטבלת הניקוד, וייתכן שתתבקש להגיש שאלה בעצמך.",
   "hostSetup.submit": "צור חדר",
   "hostSetup.back": "חזרה",
 
@@ -158,6 +160,16 @@
 
   "guessIntro.getReady": "התכוננו לנחש!",
 
+  "askQuestion.overlayEyebrow": "התור שלך",
+  "askQuestion.overlayTitle": "אתה השואל של השאלה הבאה!",
+  "askQuestion.overlayConfirm": "הבנתי, בואו נכתוב אותה",
+  "askQuestion.title": "כתוב את השאלה הבאה",
+  "askQuestion.submit": "שאל שאלה זו",
+  "askQuestion.askedBy": "נשאל על ידי {name}",
+
+  "waitingForQuestion.eyebrow": "ממתינים",
+  "waitingForQuestion.message": "המשחק ממתין ל-{name} להגיש את השאלה הבאה",
+
   "roundEnd.complete": "הסבב הסתיים",
   "roundEnd.standings": "תוצאות הסבב",
   "roundEnd.results": "תוצאות הסבב",
@@ -180,14 +192,17 @@
   "resultOverlay.badGuess": "ניחוש רע",
   "resultOverlay.youMissedIt": "פספסת את זה",
   "resultOverlay.notSoCleverGuess": "לא כל כך חכם",
+  "resultOverlay.noGuess": "לא הגשת ניחוש. הצטרף שוב בסבב הבא.",
 
-  "gameEnd.complete": "המשחק הסתיים",
-  "gameEnd.finished": "🎉 המשחק הסתיים!",
-  "gameEnd.topPerformers": "המצטיינים",
+  "gameEnd.complete": "השאלה הושלמה",
+  "gameEnd.finished": "כל סבבי הניחושים הסתיימו!",
+  "gameEnd.topPerformers": "תוצאות סבב זה",
   "gameEnd.gold": "🥇 זהב",
   "gameEnd.silver": "🥈 כסף",
   "gameEnd.bronze": "🥉 ארד",
-  "gameEnd.newGame": "התחל משחק חדש",
+  "gameEnd.newGame": "שאל שאלה נוספת",
+  "gameEnd.continueNextQuestion": "המשך לשאלה הבאה",
+  "gameEnd.nextAsker": "השואל הבא הוא {name}",
 
   "prompts.enterPlayerName": "הזן את שם השחקן שלך",
   "prompts.enterRoomCode": "הזן את קוד החדר",

@@ -115,7 +115,8 @@ function safePlayer(player) {
   };
 }
 
-// Every player is eligible except those whose submitted answer was already revealed (used up) in an earlier round.
+// Every player is eligible except those whose submitted answer was already revealed (used up) in an earlier round,
+// and the current asker, who never submits an answer of their own.
 function getEligibleGuessTargetIds(room) {
   const revealedAuthorIds = new Set(
     room.answers
@@ -128,7 +129,11 @@ function getEligibleGuessTargetIds(room) {
       }),
   );
 
-  return new Set(room.players.map((player) => player.id).filter((id) => !revealedAuthorIds.has(id)));
+  return new Set(
+    room.players
+      .map((player) => player.id)
+      .filter((id) => !revealedAuthorIds.has(id) && id !== room.askingPlayerId),
+  );
 }
 
 function makeRoomState(room) {
@@ -152,6 +157,9 @@ function makeRoomState(room) {
     guessDeadlineMs: room.guessDeadlineMs,
     guessCountdownEndsAt: room.guessCountdownEndsAt,
     remainingAuthorIds: [...getEligibleGuessTargetIds(room)],
+    hostIsPlayer: room.hostIsPlayer,
+    askingPlayerId: room.askingPlayerId,
+    pendingNextAskerId: room.pendingNextAskerId,
   };
 }
 
@@ -285,8 +293,11 @@ function normalizeGuessTimeoutSeconds(value) {
   return GUESS_TIMEOUT_SECONDS;
 }
 
-function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvatar, guessTimeoutSeconds }) {
+function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvatar, guessTimeoutSeconds, addSelfAsPlayer = false }) {
   const code = createRoomCode();
+  const hostId = `${code}-host-${Date.now()}`;
+  const normalizedHostName = (hostName || 'Host').trim() || 'Host';
+  const normalizedHostAvatar = normalizeAvatar(hostAvatar);
   const room = {
     code,
     phase: 'lobby',
@@ -303,10 +314,10 @@ function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvata
     answerQueue: [],
     currentAnswer: null,
     roundResults: [],
-    hostId: `${code}-host-${Date.now()}`,
+    hostId,
     hostAccountId,
-    hostName: (hostName || 'Host').trim() || 'Host',
-    hostAvatar: normalizeAvatar(hostAvatar),
+    hostName: normalizedHostName,
+    hostAvatar: normalizedHostAvatar,
     hostReconnectToken: createReconnectToken(),
     hostDisconnectedAt: null,
     playerTurnIndex: 0,
@@ -318,7 +329,23 @@ function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvata
     guessCountdownHandle: null,
     gameStartedAt: null,
     questionsPlayedThisGame: 0,
+    hostIsPlayer: Boolean(addSelfAsPlayer),
+    // Host asks the first question in host-as-player rooms; set up-front so the lobby UI already knows the asker.
+    askingPlayerId: addSelfAsPlayer ? hostId : null,
+    lastAskerId: addSelfAsPlayer ? hostId : null,
+    pendingNextAskerId: null,
   };
+
+  if (room.hostIsPlayer) {
+    room.players.push({
+      id: hostId,
+      name: normalizedHostName,
+      score: 0,
+      avatar: normalizedHostAvatar,
+      reconnectToken: null,
+      disconnectedAt: null,
+    });
+  }
 
   rooms.set(code, room);
   return room;
@@ -439,6 +466,9 @@ function startRound(room, customQuestion = '') {
   if (room.players.length < 1) {
     return;
   }
+  if (room.hostIsPlayer && room.players.length < 2) {
+    return;
+  }
 
   const trimmedQuestion = (customQuestion || '').trim();
   const selectedQuestion = trimmedQuestion || questionBank[Math.floor(Math.random() * questionBank.length)];
@@ -446,9 +476,14 @@ function startRound(room, customQuestion = '') {
   if (room.phase === 'lobby') {
     room.gameStartedAt = Date.now();
     room.questionsPlayedThisGame = 0;
+    if (room.hostIsPlayer) {
+      room.askingPlayerId = room.hostId;
+      room.lastAskerId = room.hostId;
+    }
     logger.event('game-started', { roomCode: room.code, participantCount: room.players.length });
   }
   room.questionsPlayedThisGame += 1;
+  room.pendingNextAskerId = null;
   room.answerRoundNumber = 1;
   room.phase = 'answer-collection';
   room.question = selectedQuestion;
@@ -466,6 +501,48 @@ function startRound(room, customQuestion = '') {
   room.players.forEach((player) => {
     player.score = player.score || 0;
   });
+
+  broadcastRoom(room);
+}
+
+// Score leader asks the next question; ties prefer someone other than whoever asked most recently.
+function pickNextAsker(room) {
+  const maxScore = Math.max(...room.players.map((player) => player.score));
+  const leaders = room.players.filter((player) => player.score === maxScore);
+
+  if (leaders.length === 1) {
+    return leaders[0].id;
+  }
+
+  const withoutLastAsker = leaders.filter((player) => player.id !== room.lastAskerId);
+  return (withoutLastAsker[0] || leaders[0]).id;
+}
+
+// Between questions in a host-as-player room: hands the "ask" duty to the score leader without resetting the game.
+function continueToNextQuestion(room) {
+  if (room.players.length < 2) {
+    return;
+  }
+
+  clearGuessTimeout(room);
+  clearGuessCountdown(room);
+
+  const nextAskerId = pickNextAsker(room);
+  room.askingPlayerId = nextAskerId;
+  room.lastAskerId = nextAskerId;
+  room.pendingNextAskerId = null;
+  room.phase = 'asking';
+  room.answerRoundNumber = 0;
+  room.answerAuthorId = null;
+  room.selectedAnswer = '';
+  room.activeGuesserIndex = 0;
+  room.playerTurnIndex = 0;
+  room.timeLeft = 0;
+  room.answers = [];
+  room.guesses = [];
+  room.answerQueue = [];
+  room.currentAnswer = null;
+  room.roundResults = [];
 
   broadcastRoom(room);
 }
@@ -511,6 +588,7 @@ function prepareCurrentAnswer(room) {
   if (room.answerQueue.length === 0) {
     room.currentAnswer = null;
     room.phase = 'game-end';
+    room.pendingNextAskerId = room.hostIsPlayer ? pickNextAsker(room) : null;
     room.timeLeft = 0;
     room.answerAuthorId = null;
     room.selectedAnswer = '';
@@ -618,6 +696,7 @@ function advanceGuessRound(room) {
 
   if (room.answerQueue.length === 0) {
     room.phase = 'game-end';
+    room.pendingNextAskerId = room.hostIsPlayer ? pickNextAsker(room) : null;
     room.timeLeft = 0;
     room.answerAuthorId = null;
     room.selectedAnswer = '';
@@ -642,6 +721,10 @@ function revealAnswer(room) {
 
 function submitAnswer(room, playerId, answerText) {
   if (room.phase !== 'answer-collection') {
+    return;
+  }
+
+  if (playerId === room.askingPlayerId) {
     return;
   }
 
@@ -682,7 +765,7 @@ function evaluateGuess(room, guesserId, guessTargetId) {
     return;
   }
 
-  if (guesserId === room.hostId || guesserId === currentAnswer.playerId || guessTargetId === guesserId) {
+  if (guesserId === room.askingPlayerId || guesserId === currentAnswer.playerId || guessTargetId === guesserId) {
     return;
   }
 
@@ -916,6 +999,7 @@ wss.on('connection', (socket, request) => {
             language: message.language,
             hostAvatar: message.avatar,
             guessTimeoutSeconds: message.guessTimeoutSeconds,
+            addSelfAsPlayer: message.addSelfAsPlayer,
           });
           attachSocketToRoom(roomData, socket, roomData.hostId);
           sendRoomSession(socket, roomData, 'host', roomData.hostId, roomData.hostName, roomData.hostReconnectToken);
@@ -979,7 +1063,13 @@ wss.on('connection', (socket, request) => {
         }
 
         case 'start-round': {
-          if (!room || room.hostAccountId !== socket.user?.id) {
+          // In host-as-player rooms, the current asker starts the round, not necessarily the host account.
+          const canStartRound = room && (
+            room.hostIsPlayer
+              ? socket.playerId === room.askingPlayerId
+              : room.hostAccountId === socket.user?.id
+          );
+          if (!canStartRound) {
             return;
           }
 
@@ -997,7 +1087,13 @@ wss.on('connection', (socket, request) => {
         }
 
         case 'lock-answers': {
-          if (!room || room.hostAccountId !== socket.user?.id) {
+          // In host-as-player rooms, the current asker locks answers, not necessarily the host account.
+          const canLockAnswers = room && (
+            room.hostIsPlayer
+              ? socket.playerId === room.askingPlayerId
+              : room.hostAccountId === socket.user?.id
+          );
+          if (!canLockAnswers) {
             return;
           }
           lockAnswers(room);
@@ -1005,7 +1101,13 @@ wss.on('connection', (socket, request) => {
         }
 
         case 'calculate-score': {
-          if (!room || room.hostAccountId !== socket.user?.id) {
+          // In host-as-player rooms, the current asker stops the timer, not necessarily the host account.
+          const canCalculateScore = room && (
+            room.hostIsPlayer
+              ? socket.playerId === room.askingPlayerId
+              : room.hostAccountId === socket.user?.id
+          );
+          if (!canCalculateScore) {
             return;
           }
           calculateRoundScores(room);
@@ -1013,10 +1115,25 @@ wss.on('connection', (socket, request) => {
         }
 
         case 'advance-answer': {
-          if (!room || room.hostAccountId !== socket.user?.id) {
+          // In host-as-player rooms, the current asker approves moving to the next round, not the host.
+          const canAdvance = room && (
+            room.hostIsPlayer
+              ? socket.playerId === room.askingPlayerId
+              : room.hostAccountId === socket.user?.id
+          );
+          if (!canAdvance) {
             return;
           }
           advanceGuessRound(room);
+          break;
+        }
+
+        case 'submit-question': {
+          if (!room || !room.hostIsPlayer || room.phase !== 'asking' || socket.playerId !== room.askingPlayerId) {
+            return;
+          }
+          logger.event('question-submitted', { roomCode: room.code, askingPlayerId: room.askingPlayerId });
+          startRound(room, message.question || '');
           break;
         }
 
@@ -1048,7 +1165,11 @@ wss.on('connection', (socket, request) => {
           if (!room || room.hostAccountId !== socket.user?.id) {
             return;
           }
-          startNewGame(room);
+          if (room.hostIsPlayer) {
+            continueToNextQuestion(room);
+          } else {
+            startNewGame(room);
+          }
           break;
         }
 
@@ -1132,6 +1253,8 @@ export {
   reconnectGracePeriodMs,
   startRound,
   startNewGame,
+  pickNextAsker,
+  continueToNextQuestion,
   emitGameEndedIfInProgress,
   makeRoomState,
   getEligibleGuessTargetIds,
