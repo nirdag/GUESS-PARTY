@@ -870,6 +870,28 @@ app.post('/auth/login', authRateLimiter, (req, res) => {
   res.json({ user: result.user });
 });
 
+app.post('/auth/e2e-login', (req, res) => {
+  if (process.env.NODE_ENV === 'production' || process.env.E2E_TEST_MODE !== 'true') {
+    res.status(404).end();
+    return;
+  }
+
+  const result = authService.ensureVerifiedUser(req.body?.email, req.body?.password);
+  if (result.error) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+
+  const loginResult = authService.login(req.body?.email, req.body?.password);
+  if (loginResult.error) {
+    res.status(401).json({ error: loginResult.error });
+    return;
+  }
+
+  setSessionCookie(res, loginResult.token);
+  res.json({ user: loginResult.user });
+});
+
 app.post('/auth/logout', (req, res) => {
   const token = parseCookies(req.headers.cookie)[sessionCookieName];
   authService.logout(token);

@@ -136,7 +136,33 @@ function createAuthService({ sendVerificationEmail = () => {}, onAccountStatsCha
     writeStore(store);
   }
 
-  return { signUp, login, getUserBySession, verifyEmail, logout, getAccountStats, publicUser };
+  function ensureVerifiedUser(email, password) {
+    const normalizedEmail = normalizeEmail(email);
+    const validationError = validateCredentials(normalizedEmail, password);
+    if (validationError) return { error: validationError };
+
+    const store = readStore();
+    let user = store.users.find((entry) => entry.email === normalizedEmail);
+
+    if (!user) {
+      user = {
+        id: crypto.randomUUID(),
+        email: normalizedEmail,
+        passwordHash: hashPassword(password),
+        emailVerified: true,
+        createdAt: now(),
+      };
+      store.users.push(user);
+    } else {
+      user.passwordHash = hashPassword(password);
+      user.emailVerified = true;
+    }
+
+    writeStore(store);
+    return { user: publicUser(user) };
+  }
+
+  return { signUp, login, getUserBySession, verifyEmail, logout, getAccountStats, publicUser, ensureVerifiedUser };
 }
 
 export { createAuthService, normalizeEmail, validateCredentials };

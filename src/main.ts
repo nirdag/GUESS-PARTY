@@ -200,7 +200,7 @@ let reconnectTimer: number | null = null
 let reconnectAlertShown = false
 
 // Vite dev server (5173) proxies nothing, so dev must reach the API/WS server on its own port.
-const DEV_API_PORT = '8080'
+const DEV_API_PORT = import.meta.env.VITE_API_PORT || '8080'
 
 // Reassigned by connectSocket(): the server closes this connection after room-closed/left-room,
 // so a fresh socket is needed for the next room rather than reusing the dead one.

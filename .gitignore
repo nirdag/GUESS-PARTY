@@ -12,6 +12,9 @@ dist
 .data
 dist-ssr
 *.local
+.e2e-data
+playwright-report
+test-results
 
 # Editor directories and files
 .vscode/*
