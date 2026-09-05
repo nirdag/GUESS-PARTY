@@ -307,9 +307,13 @@ describe('CRITICAL: Guess Validation', () => {
     const player3 = createTestPlayer('p3', 'Charlie');
     room.players = [player1, player2, player3];
     room.hostId = 'host-123';
-    room.answerQueue = [{ playerId: 'p1', text: 'test', playerName: 'Alice' }];
+    room.answers = [
+      { playerId: 'p1', text: 'test', playerName: 'Alice' },
+      { playerId: 'p3', text: 'other answer', playerName: 'Charlie' },
+    ];
+    room.answerQueue = [{ playerId: 'p3', text: 'other answer', playerName: 'Charlie' }];
     room.phase = 'guessing';
-    room.currentAnswer = room.answerQueue[0];
+    room.currentAnswer = room.answers[0];
 
     evaluateGuess(room, 'p2', 'p3');
     expect(room.guesses).toHaveLength(1);
@@ -325,9 +329,13 @@ describe('CRITICAL: Guess Validation', () => {
     const player3 = createTestPlayer('p3', 'Charlie');
     room.players = [player1, player2, player3];
     room.hostId = 'host-123';
-    room.answerQueue = [{ playerId: 'p1', text: 'test', playerName: 'Alice' }];
+    room.answers = [
+      { playerId: 'p1', text: 'test', playerName: 'Alice' },
+      { playerId: 'p3', text: 'other answer', playerName: 'Charlie' },
+    ];
+    room.answerQueue = [{ playerId: 'p3', text: 'other answer', playerName: 'Charlie' }];
     room.phase = 'guessing';
-    room.currentAnswer = room.answerQueue[0];
+    room.currentAnswer = room.answers[0];
 
     evaluateGuess(room, 'p2', 'p3');
 
@@ -932,11 +940,27 @@ describe('HIGH: Guess options shrink as authors get revealed', () => {
     expect(eligible).toEqual(new Set(['p2', 'p3']));
   });
 
+  it('getEligibleGuessTargetIds excludes a player who did not submit an answer', () => {
+    room.players.push(createTestPlayer('p4', 'Dana'));
+    room.answerQueue = [{ playerId: 'p2', text: 'answer2', playerName: 'Bob' }];
+    room.currentAnswer = { playerId: 'p1', text: 'answer1', playerName: 'Alice' };
+
+    expect(getEligibleGuessTargetIds(room)).toEqual(new Set(['p1', 'p2']));
+  });
+
   it('makeRoomState exposes remainingAuthorIds for the client to filter guess options', () => {
     room.answerQueue = [{ playerId: 'p3', text: 'answer3', playerName: 'Charlie' }];
     room.currentAnswer = { playerId: 'p2', text: 'answer2', playerName: 'Bob' };
 
     expect(makeRoomState(room).remainingAuthorIds.sort()).toEqual(['p2', 'p3']);
+  });
+
+  it('makeRoomState omits a player who did not submit an answer from guess options', () => {
+    room.players.push(createTestPlayer('p4', 'Dana'));
+    room.answerQueue = [{ playerId: 'p2', text: 'answer2', playerName: 'Bob' }];
+    room.currentAnswer = { playerId: 'p1', text: 'answer1', playerName: 'Alice' };
+
+    expect(makeRoomState(room).remainingAuthorIds.sort()).toEqual(['p1', 'p2']);
   });
 
   it('evaluateGuess rejects a guess targeting a player already revealed in a prior round', () => {
@@ -947,6 +971,18 @@ describe('HIGH: Guess options shrink as authors get revealed', () => {
     room.currentAnswer = { playerId: 'p3', text: 'answer3', playerName: 'Charlie' };
 
     evaluateGuess(room, 'p2', 'p1');
+
+    expect(room.guesses).toHaveLength(0);
+  });
+
+  it('evaluateGuess rejects a guess targeting a player who did not submit an answer', () => {
+    room.players.push(createTestPlayer('p4', 'Dana'));
+    room.hostId = 'host-123';
+    room.phase = 'guessing';
+    room.answerQueue = [{ playerId: 'p2', text: 'answer2', playerName: 'Bob' }];
+    room.currentAnswer = { playerId: 'p1', text: 'answer1', playerName: 'Alice' };
+
+    evaluateGuess(room, 'p2', 'p4');
 
     expect(room.guesses).toHaveLength(0);
   });

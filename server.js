@@ -115,8 +115,7 @@ function safePlayer(player) {
   };
 }
 
-// Every player is eligible except those whose submitted answer was already revealed (used up) in an earlier round,
-// and the current asker, who never submits an answer of their own.
+// Only answer authors are eligible, excluding those revealed in an earlier round and the current asker.
 function getEligibleGuessTargetIds(room) {
   const revealedAuthorIds = new Set(
     room.answers
@@ -130,8 +129,8 @@ function getEligibleGuessTargetIds(room) {
   );
 
   return new Set(
-    room.players
-      .map((player) => player.id)
+    room.answers
+      .map((answer) => answer.playerId)
       .filter((id) => !revealedAuthorIds.has(id) && id !== room.askingPlayerId),
   );
 }
