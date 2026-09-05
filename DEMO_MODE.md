@@ -23,6 +23,8 @@ The demo mode allows you to quickly visualize and test any game screen state wit
 | **lobby** | Lobby screen with host view and joined players |
 | **answer-collection** | Answer collection phase - players submitting responses |
 | **player-guessing** | Player's guessing screen with countdown timer |
+| **final-matchup-guessing** | Final round: last two answers shown together, guess who wrote each |
+| **final-matchup-round-end** | Final round end: both answers revealed with the guess results |
 | **round-end-correct** | Round end with celebration overlay (correct guess) |
 | **round-end-incorrect** | Round end with wrong guess overlay |
 | **round-end-no-guess-eligible** | Round end with yellow no-guess overlay for an eligible player |

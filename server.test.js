@@ -367,16 +367,32 @@ describe('HIGH: Game Flow Transitions', () => {
   });
 
   it('lockAnswers transitions from answer-collection to guessing', () => {
-    const player1 = createTestPlayer('p1', 'Alice');
-    room.players = [player1];
+    room.players = [createTestPlayer('p1', 'Alice'), createTestPlayer('p2', 'Bob'), createTestPlayer('p3', 'Carol')];
     room.phase = 'answer-collection';
-    room.answers = [{ playerId: 'p1', playerName: 'Alice', text: 'test answer' }];
+    room.answers = [
+      { playerId: 'p1', playerName: 'Alice', text: 'test answer' },
+      { playerId: 'p2', playerName: 'Bob', text: 'answer two' },
+      { playerId: 'p3', playerName: 'Carol', text: 'answer three' },
+    ];
 
     lockAnswers(room);
 
     expect(room.phase).toBe('guessing');
-    expect(room.answerQueue).toHaveLength(0);
-    expect(room.currentAnswer).toEqual(room.answers[0]);
+    expect(room.answerQueue).toHaveLength(2);
+    expect(room.answers).toContainEqual(room.currentAnswer);
+  });
+
+  it('lockAnswers does nothing with fewer than 3 submitted answers', () => {
+    room.players = [createTestPlayer('p1', 'Alice'), createTestPlayer('p2', 'Bob')];
+    room.phase = 'answer-collection';
+    room.answers = [
+      { playerId: 'p1', playerName: 'Alice', text: 'test answer' },
+      { playerId: 'p2', playerName: 'Bob', text: 'answer two' },
+    ];
+
+    lockAnswers(room);
+
+    expect(room.phase).toBe('answer-collection');
   });
 
   it('lockAnswers does nothing if no answers submitted', () => {
@@ -588,7 +604,7 @@ describe('CRITICAL: Start New Game', () => {
   it('host can start a fresh round with a new question after startNewGame', () => {
     const player1 = createTestPlayer('p1', 'Alice');
     player1.score = 360;
-    room.players = [player1];
+    room.players = [player1, createTestPlayer('p2', 'Bob'), createTestPlayer('p3', 'Carol')];
     room.phase = 'game-end';
 
     startNewGame(room);
@@ -605,7 +621,7 @@ describe('MEDIUM: Game lifecycle metrics', () => {
 
   beforeEach(() => {
     room = createTestRoom();
-    room.players = [createTestPlayer('p1', 'Alice'), createTestPlayer('p2', 'Bob')];
+    room.players = [createTestPlayer('p1', 'Alice'), createTestPlayer('p2', 'Bob'), createTestPlayer('p3', 'Carol')];
     vi.spyOn(logger, 'event').mockImplementation(() => {});
   });
 
@@ -616,7 +632,7 @@ describe('MEDIUM: Game lifecycle metrics', () => {
   it('startRound emits game-started only for the first question of a game', () => {
     startRound(room, 'Question one');
 
-    expect(logger.event).toHaveBeenCalledWith('game-started', { roomCode: room.code, participantCount: 2 });
+    expect(logger.event).toHaveBeenCalledWith('game-started', { roomCode: room.code, participantCount: 3 });
     expect(room.gameStartedAt).not.toBeNull();
     expect(room.questionsPlayedThisGame).toBe(1);
 
@@ -641,7 +657,7 @@ describe('MEDIUM: Game lifecycle metrics', () => {
 
     expect(logger.event).toHaveBeenCalledWith('game-ended', expect.objectContaining({
       roomCode: room.code,
-      participantCount: 2,
+      participantCount: 3,
       questionsPlayed: 1,
     }));
     expect(room.gameStartedAt).toBeNull();
@@ -1102,6 +1118,8 @@ describe('HIGH: Host-as-player mode', () => {
   it('makes the host the asker of the first question', () => {
     const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', addSelfAsPlayer: true });
     addPlayerToRoom(room, 'Alice');
+    addPlayerToRoom(room, 'Bob');
+    addPlayerToRoom(room, 'Carol');
 
     startRound(room, 'What is the best pizza topping?');
 
@@ -1127,6 +1145,8 @@ describe('HIGH: Host-as-player mode', () => {
   it('excludes the asker from submitting an answer', () => {
     const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', addSelfAsPlayer: true });
     addPlayerToRoom(room, 'Alice');
+    addPlayerToRoom(room, 'Bob');
+    addPlayerToRoom(room, 'Carol');
     startRound(room, 'What is the best pizza topping?');
 
     submitAnswer(room, room.askingPlayerId, 'Pepperoni');
@@ -1137,6 +1157,8 @@ describe('HIGH: Host-as-player mode', () => {
   it('excludes the asker from guess eligibility', () => {
     const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', addSelfAsPlayer: true });
     addPlayerToRoom(room, 'Alice');
+    addPlayerToRoom(room, 'Bob');
+    addPlayerToRoom(room, 'Carol');
     startRound(room, 'What is the best pizza topping?');
 
     expect(getEligibleGuessTargetIds(room).has(room.askingPlayerId)).toBe(false);
@@ -1176,6 +1198,8 @@ describe('HIGH: Host-as-player mode', () => {
   it('continueToNextQuestion hands the ask duty to the leader without resetting scores', () => {
     const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', addSelfAsPlayer: true });
     const alice = addPlayerToRoom(room, 'Alice');
+    addPlayerToRoom(room, 'Bob');
+    addPlayerToRoom(room, 'Carol');
     startRound(room, 'What is the best pizza topping?');
     alice.score = 500;
 
@@ -1189,6 +1213,8 @@ describe('HIGH: Host-as-player mode', () => {
   it('announces the next asker at game end and clears it when continuing', () => {
     const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', addSelfAsPlayer: true });
     const alice = addPlayerToRoom(room, 'Alice');
+    addPlayerToRoom(room, 'Bob');
+    addPlayerToRoom(room, 'Carol');
     room.players[0].score = 100;
     alice.score = 500;
     room.phase = 'round-end';
@@ -1207,6 +1233,8 @@ describe('HIGH: Host-as-player mode', () => {
   it('new-game continues to the next asker instead of resetting to lobby when hostIsPlayer is set', () => {
     const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', addSelfAsPlayer: true });
     const alice = addPlayerToRoom(room, 'Alice');
+    addPlayerToRoom(room, 'Bob');
+    addPlayerToRoom(room, 'Carol');
     startRound(room, 'What is the best pizza topping?');
     alice.score = 500;
 
@@ -1218,6 +1246,8 @@ describe('HIGH: Host-as-player mode', () => {
   it('lets the newly assigned asker submit a question and start the round', () => {
     const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', addSelfAsPlayer: true });
     const alice = addPlayerToRoom(room, 'Alice');
+    addPlayerToRoom(room, 'Bob');
+    addPlayerToRoom(room, 'Carol');
     startRound(room, 'What is the best pizza topping?');
     alice.score = 500;
     continueToNextQuestion(room);
@@ -1231,11 +1261,180 @@ describe('HIGH: Host-as-player mode', () => {
   it('classic rooms are unaffected: host never appears in players and always asks', () => {
     const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account' });
     addPlayerToRoom(room, 'Alice');
+    addPlayerToRoom(room, 'Bob');
+    addPlayerToRoom(room, 'Carol');
 
     startRound(room, 'What is the best pizza topping?');
 
     expect(room.players.some((player) => player.id === room.hostId)).toBe(false);
     expect(room.askingPlayerId).toBeNull();
     expect(getEligibleGuessTargetIds(room).has(room.hostId)).toBe(false);
+  });
+});
+
+describe('HIGH: Minimum player/answer requirements', () => {
+  it('startRound blocks a classic room with fewer than 3 players', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account' });
+    addPlayerToRoom(room, 'Alice');
+    addPlayerToRoom(room, 'Bob');
+
+    startRound(room, 'What is the best pizza topping?');
+
+    expect(room.phase).toBe('lobby');
+  });
+
+  it('startRound allows a classic room with exactly 3 players', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account' });
+    addPlayerToRoom(room, 'Alice');
+    addPlayerToRoom(room, 'Bob');
+    addPlayerToRoom(room, 'Carol');
+
+    startRound(room, 'What is the best pizza topping?');
+
+    expect(room.phase).toBe('answer-collection');
+  });
+
+  it('startRound blocks a host-as-player room with fewer than 4 total players', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', addSelfAsPlayer: true });
+    addPlayerToRoom(room, 'Alice');
+    addPlayerToRoom(room, 'Bob');
+
+    startRound(room, 'What is the best pizza topping?');
+
+    expect(room.phase).toBe('lobby');
+  });
+});
+
+describe('HIGH: Final matchup (last two answers)', () => {
+  let room;
+
+  beforeEach(() => {
+    room = createTestRoom();
+    room.players = [
+      createTestPlayer('asker', 'Host'),
+      createTestPlayer('p1', 'Alice'),
+      createTestPlayer('p2', 'Bob'),
+      createTestPlayer('p3', 'Carol'),
+    ];
+    room.askingPlayerId = 'asker';
+    room.phase = 'guessing';
+    room.answers = [
+      { playerId: 'p1', playerName: 'Alice', text: 'answer one' },
+      { playerId: 'p2', playerName: 'Bob', text: 'answer two' },
+      { playerId: 'p3', playerName: 'Carol', text: 'answer three' },
+    ];
+  });
+
+  it('prepareCurrentAnswer switches to a final matchup once exactly 2 answers remain', () => {
+    room.answerQueue = [
+      { playerId: 'p2', playerName: 'Bob', text: 'answer two' },
+      { playerId: 'p3', playerName: 'Carol', text: 'answer three' },
+    ];
+
+    prepareCurrentAnswer(room);
+
+    expect(room.answerQueue).toHaveLength(0);
+    expect(room.currentAnswer).toBeNull();
+    expect(room.finalMatchup).not.toBeNull();
+    expect(room.finalMatchup.answers.map((a) => a.text).sort()).toEqual(['answer three', 'answer two']);
+    expect(room.finalMatchup.authorIds.sort()).toEqual(['p2', 'p3']);
+    expect(room.finalMatchup.truth).toEqual({ A: expect.any(String), B: expect.any(String) });
+  });
+
+  it('getEligibleGuessTargetIds returns both final-matchup authors', () => {
+    room.finalMatchup = {
+      answers: [{ slot: 'A', text: 'answer two' }, { slot: 'B', text: 'answer three' }],
+      authorIds: ['p2', 'p3'],
+      truth: { A: 'p2', B: 'p3' },
+      autoRevealed: false,
+    };
+
+    expect(getEligibleGuessTargetIds(room)).toEqual(new Set(['p2', 'p3']));
+  });
+
+  it('evaluateGuess rejects the asker, both final authors, and an invalid slot', () => {
+    room.finalMatchup = {
+      answers: [{ slot: 'A', text: 'answer two' }, { slot: 'B', text: 'answer three' }],
+      authorIds: ['p2', 'p3'],
+      truth: { A: 'p2', B: 'p3' },
+      autoRevealed: false,
+    };
+
+    evaluateGuess(room, 'asker', 'p2', 'A');
+    evaluateGuess(room, 'p2', 'p3', 'A');
+    evaluateGuess(room, 'p1', 'p2', 'not-a-slot');
+
+    expect(room.guesses).toHaveLength(0);
+  });
+
+  it('evaluateGuess accepts an eligible guesser and records the answerSlot', () => {
+    room.finalMatchup = {
+      answers: [{ slot: 'A', text: 'answer two' }, { slot: 'B', text: 'answer three' }],
+      authorIds: ['p2', 'p3'],
+      truth: { A: 'p2', B: 'p3' },
+      autoRevealed: false,
+    };
+
+    evaluateGuess(room, 'p1', 'p3', 'B');
+
+    expect(room.guesses).toHaveLength(1);
+    expect(room.guesses[0]).toMatchObject({ guesserId: 'p1', guessedId: 'p3', answerSlot: 'B' });
+  });
+
+  it('calculateRoundScores scores final-matchup guesses per slot with speed-tier points', () => {
+    room.finalMatchup = {
+      answers: [{ slot: 'A', text: 'answer two' }, { slot: 'B', text: 'answer three' }],
+      authorIds: ['p2', 'p3'],
+      truth: { A: 'p2', B: 'p3' },
+      autoRevealed: false,
+    };
+    room.guesses = [
+      { guesserId: 'p1', guesserName: 'Alice', guessedId: 'p2', guessedName: 'Bob', answerSlot: 'A' },
+      { guesserId: 'asker', guesserName: 'Host', guessedId: 'p3', guessedName: 'Carol', answerSlot: 'B' },
+    ];
+
+    calculateRoundScores(room);
+
+    expect(room.phase).toBe('round-end');
+    expect(room.roundResults.find((r) => r.guesserName === 'Alice')).toMatchObject({ correct: true, points: 120, answerSlot: 'A' });
+    expect(room.roundResults.find((r) => r.guesserName === 'Host')).toMatchObject({ correct: true, points: 100, answerSlot: 'B' });
+  });
+
+  it('prepareCurrentAnswer auto-reveals with no score when nobody is left eligible to guess', () => {
+    room.players = [
+      createTestPlayer('asker', 'Host'),
+      createTestPlayer('p2', 'Bob'),
+      createTestPlayer('p3', 'Carol'),
+    ];
+    room.answerQueue = [
+      { playerId: 'p2', playerName: 'Bob', text: 'answer two' },
+      { playerId: 'p3', playerName: 'Carol', text: 'answer three' },
+    ];
+
+    prepareCurrentAnswer(room);
+
+    expect(room.finalMatchup.autoRevealed).toBe(true);
+    expect(room.roundResults).toHaveLength(0);
+    expect(room.phase).toBe('round-end');
+    expect(room.guessDeadlineMs).toBeNull();
+    expect(room.guessCountdownEndsAt).toBeNull();
+  });
+
+  it('makeRoomState never exposes the true answerAuthorId or matchup truth while guessing', () => {
+    room.answerQueue = [
+      { playerId: 'p2', playerName: 'Bob', text: 'answer two' },
+      { playerId: 'p3', playerName: 'Carol', text: 'answer three' },
+    ];
+    prepareCurrentAnswer(room);
+
+    const publicState = makeRoomState(room);
+
+    expect(publicState.answerAuthorId).toBeNull();
+    expect(publicState.finalMatchup.truth).toBeNull();
+    expect(publicState.finalMatchup.answers.every((answer) => !('playerId' in answer))).toBe(true);
+
+    calculateRoundScores(room);
+    const revealedState = makeRoomState(room);
+    expect(revealedState.finalMatchup.truth).toEqual(room.finalMatchup.truth);
   });
 });

@@ -86,7 +86,8 @@ test('host and three players can complete a live game', async ({ browser, baseUR
     await host.page.locator('[data-role="lock-answers"]').click()
     await checkpoint(host, 'guessing-started')
 
-    for (let roundIndex = 0; roundIndex < playerNames.length; roundIndex += 1) {
+    // 3 submitted answers resolve as 1 normal round + 1 final matchup round (the last two answers paired together).
+    for (let roundIndex = 0; roundIndex < playerNames.length - 1; roundIndex += 1) {
       for (const player of clients.slice(1)) {
         const guessCards = player.page.locator('[data-guess-id]')
         if (await guessCards.count() > 0) {

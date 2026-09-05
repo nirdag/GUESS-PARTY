@@ -158,6 +158,16 @@
   "playerGuessing.selected": "נבחר",
   "playerGuessing.noSelectionYet": "עדיין אין בחירה",
 
+  "finalMatchup.eyebrow": "הסבב האחרון!",
+  "finalMatchup.currentTurn": "שתי התשובות האחרונות",
+  "finalMatchup.matchThem": "התאימו כל תשובה למי שכתב אותה",
+  "finalMatchup.answerLabel": "תשובה {slot}",
+  "finalMatchup.guessThisPerson": "כתב/ה את זו",
+  "finalMatchup.youAlreadyKnow": "אתם כבר יודעים מי כתב את אלה - ממתינים לניחוש של האחרים.",
+  "finalMatchup.guessedLabel": "ניחש/ה {name} עבור תשובה {slot}",
+  "finalMatchup.guessedLine": "{guesser} ניחש/ה {guessed} עבור תשובה {slot}",
+  "finalMatchup.autoRevealed": "לא נשאר אף אחד שיכול לנחש את זה, אז לא היו נקודות לניחוש.",
+
   "guessIntro.getReady": "התכוננו לנחש!",
 
   "askQuestion.overlayEyebrow": "התור שלך",

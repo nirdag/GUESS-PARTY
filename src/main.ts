@@ -39,6 +39,7 @@ type GuessRecord = {
   guessedName: string
   correct: boolean
   points: number
+  answerSlot?: 'A' | 'B'
 }
 
 type RoundResult = {
@@ -46,6 +47,14 @@ type RoundResult = {
   guessedName: string
   correct: boolean
   points: number
+  answerSlot?: 'A' | 'B'
+}
+
+type FinalMatchup = {
+  answers: Array<{ slot: 'A' | 'B'; text: string }>
+  authorIds: string[]
+  autoRevealed: boolean
+  truth: { A: string; B: string } | null
 }
 
 type RoomState = {
@@ -70,6 +79,7 @@ type RoomState = {
   hostIsPlayer: boolean
   askingPlayerId: string | null
   pendingNextAskerId: string | null
+  finalMatchup: FinalMatchup | null
 }
 
 const app = document.querySelector<HTMLDivElement>('#app')
@@ -169,6 +179,7 @@ const state = {
   timeLeft: 0,
   customQuestion: '',
   selectedGuessId: null as string | null,
+  selectedGuessSlot: null as 'A' | 'B' | null,
   hasSubmittedAnswer: false,
   language: getLanguage(),
   selectedAvatar: AVATAR_OPTIONS[0],
@@ -190,6 +201,7 @@ const state = {
   galleryQuestions: [] as GalleryQuestion[],
   showRoomSharingPanel: false,
   roomCodePrefilledFromUrl: false,
+  finalMatchup: null as FinalMatchup | null,
 }
 
 let queuedAction: (() => void) | null = null
@@ -506,6 +518,7 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   state.remainingAuthorIds = serverState.remainingAuthorIds ?? state.remainingAuthorIds
   state.hostIsPlayer = serverState.hostIsPlayer ?? state.hostIsPlayer
   state.pendingNextAskerId = serverState.pendingNextAskerId ?? null
+  state.finalMatchup = serverState.finalMatchup ?? null
   state.hasSubmittedAnswer = state.answers.some((answer) => answer.playerId === state.currentPlayerId)
 
   if (serverState.askingPlayerId !== undefined && serverState.askingPlayerId !== state.askingPlayerId) {
@@ -522,8 +535,10 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   if (state.phase === 'guessing') {
     const playerGuessInRound = state.guesses.find((guess) => guess.guesserId === state.currentPlayerId)
     state.selectedGuessId = playerGuessInRound?.guessedId ?? null
+    state.selectedGuessSlot = playerGuessInRound?.answerSlot ?? null
   } else {
     state.selectedGuessId = null
+    state.selectedGuessSlot = null
   }
 
   if (state.role === 'host' && serverState.hostId) {
@@ -798,7 +813,7 @@ function submitPlayerAnswer(answer: string): void {
   sendSocketMessage('submit-answer', { playerId: state.currentPlayerId, answerText: answer })
 }
 
-function handleGuess(guessId: string): void {
+function handleGuess(guessId: string, answerSlot?: 'A' | 'B'): void {
   if (!state.roomCode || !state.currentPlayerId) {
     return
   }
@@ -810,7 +825,8 @@ function handleGuess(guessId: string): void {
   }
 
   state.selectedGuessId = guessId
-  sendSocketMessage('guess', { playerId: state.currentPlayerId, targetPlayerId: guessId })
+  state.selectedGuessSlot = answerSlot ?? null
+  sendSocketMessage('guess', { playerId: state.currentPlayerId, targetPlayerId: guessId, answerSlot })
 }
 
 function lockAnswers(): void {
@@ -1721,8 +1737,8 @@ function renderHostManaging(): void {
         </div>
 
         <div class="answer-reveal">
-          <span>${state.phase === 'answer-collection' ? t('hostManaging.hiddenAnswer') : t('hostManaging.randomAnswer')}</span>
-          <strong>${state.phase === 'answer-collection' ? t('hostManaging.waitingForReveal') : state.selectedAnswer}</strong>
+          <span>${state.phase === 'answer-collection' ? t('hostManaging.hiddenAnswer') : state.finalMatchup ? t('finalMatchup.eyebrow') : t('hostManaging.randomAnswer')}</span>
+          <strong>${state.phase === 'answer-collection' ? t('hostManaging.waitingForReveal') : state.finalMatchup ? t('finalMatchup.matchThem') : state.selectedAnswer}</strong>
         </div>
 
         ${state.phase === 'answer-collection'
@@ -1731,9 +1747,34 @@ function renderHostManaging(): void {
               <p>${t('hostManaging.answerCollection')}</p>
               <h2>${t('hostManaging.submittedCount', { count: state.answers.length })}</h2>
             </div>
-            ${canControlRound ? `<button class="primary-button" type="button" data-role="lock-answers" ${state.answers.length > 0 ? '' : 'disabled'}>${t('hostManaging.startGuessing')}</button>` : ''}
+            ${canControlRound ? `<button class="primary-button" type="button" data-role="lock-answers" ${state.answers.length >= 3 ? '' : 'disabled'}>${t('hostManaging.startGuessing')}</button>` : ''}
             `
-          : `
+          : state.finalMatchup
+            ? `
+              <div class="turn-box">
+                <p>${t('finalMatchup.currentTurn')}</p>
+                <h2>${t('finalMatchup.matchThem')}</h2>
+              </div>
+
+              ${state.finalMatchup.answers.map((answer) => `<div class="mini-card"><span>${t('finalMatchup.answerLabel', { slot: answer.slot })}</span><strong>"${answer.text}"</strong></div>`).join('')}
+
+              <div class="guess-status-list">
+                ${visiblePlayers
+                  .filter((player) => !state.finalMatchup!.authorIds.includes(player.id))
+                  .map((player) => {
+                    const guess = guessMap.get(player.id)
+                    return `
+                      <div class="guess-status-row ${guess ? 'done' : 'waiting'}">
+                        <span>${formatPlayerAvatar(player)} ${player.name}</span>
+                        <strong>${guess ? t('finalMatchup.guessedLabel', { name: guess.guessedName, slot: guess.answerSlot ?? '' }) : t('hostManaging.notGuessedYet')}</strong>
+                      </div>
+                    `
+                  })
+                  .join('')}
+              </div>
+              ${canControlRound ? `<div class="host-actions-row"><button class="primary-button" type="button" data-role="calculate-score">${t('hostManaging.stopTimer')}</button></div>` : ''}
+            `
+            : `
             <div class="turn-box">
               <p>${t('hostManaging.currentTurn')}</p>
               <h2>${t('hostManaging.chooseWhoWroteIt')}</h2>
@@ -1849,7 +1890,7 @@ function renderPlayerAnswering(): void {
           `}
 
         ${canControlRound
-          ? `<div class="host-actions-row"><button class="primary-button" type="button" data-role="lock-answers" ${state.answers.length > 0 ? '' : 'disabled'}>${t('hostManaging.startGuessing')}</button></div>`
+          ? `<div class="host-actions-row"><button class="primary-button" type="button" data-role="lock-answers" ${state.answers.length >= 3 ? '' : 'disabled'}>${t('hostManaging.startGuessing')}</button></div>`
           : ''}
       </section>
     </main>
@@ -1873,7 +1914,105 @@ function renderPlayerAnswering(): void {
   })
 }
 
+function renderFinalMatchupGuessing(): void {
+  const matchup = state.finalMatchup
+  if (!matchup) {
+    return
+  }
+
+  // In host-as-player rooms, the current asker controls the round, not necessarily the host account.
+  const canControlRound = state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host'
+  // Both remaining authors already know the true pairing, so they sit this round out.
+  const isExcludedAuthor = matchup.authorIds.includes(state.currentPlayerId)
+  const authors = matchup.authorIds
+    .map((id) => state.players.find((player) => player.id === id))
+    .filter((player): player is Player => Boolean(player))
+  const selectedGuessId = state.selectedGuessId
+  const selectedSlot = state.selectedGuessSlot
+  const guessIsLocked = Boolean(selectedGuessId)
+  const currentPlayer = getCurrentPlayer()
+  const currentPlayerRank = getCurrentPlayerRank()
+  const placementLabel = currentPlayerRank === 1 ? t('playerGuessing.place1') : currentPlayerRank === 2 ? t('playerGuessing.place2') : currentPlayerRank === 3 ? t('playerGuessing.place3') : null
+
+  root.innerHTML = `
+    <main class="shell">
+      ${renderIdentityBanner()}
+      <section class="panel round-panel">
+        ${renderGuessIntroOverlay()}
+        <div class="round-header">
+          <div>
+            <p class="eyebrow">${t('finalMatchup.eyebrow')}</p>
+            <h1>${state.question}</h1>
+            ${renderQuestionAskerTag()}
+          </div>
+          ${renderGuessTimerBox(t('playerGuessing.guessingPhase'))}
+        </div>
+
+        <div class="turn-box">
+          <p>${t('finalMatchup.currentTurn')}</p>
+          <h2>${t('finalMatchup.matchThem')}</h2>
+        </div>
+
+        ${isExcludedAuthor
+          ? `<div class="mini-card"><span>${t('finalMatchup.youAlreadyKnow')}</span></div>`
+          : matchup.answers
+              .map(
+                (answer) => `
+                  <div class="mini-card">
+                    <span>${t('finalMatchup.answerLabel', { slot: answer.slot })}</span>
+                    <strong>"${answer.text}"</strong>
+                  </div>
+                  <div class="guess-grid">
+                    ${authors
+                      .map(
+                        (author) => `
+                          <button type="button" class="guess-card ${selectedSlot === answer.slot && selectedGuessId === author.id ? 'selected' : ''} ${guessIsLocked ? 'locked' : ''}" data-guess-id="${author.id}" data-answer-slot="${answer.slot}">
+                            <span>${formatPlayerAvatar(author)} ${author.name}</span>
+                            <small>${t('finalMatchup.guessThisPerson')}</small>
+                          </button>
+                        `,
+                      )
+                      .join('')}
+                  </div>
+                `,
+              )
+              .join('')}
+
+        <div class="guess-score-status">
+          <div>
+            <span>${t('playerGuessing.yourScore')}</span>
+            <strong>${currentPlayer ? formatScore(currentPlayer.score) : t('playerGuessing.scoreLoading')}</strong>
+          </div>
+          ${placementLabel ? `<span class="score-placement rank-${currentPlayerRank}">${placementLabel}</span>` : ''}
+        </div>
+
+        ${canControlRound
+          ? `<div class="host-actions-row"><button class="primary-button" type="button" data-role="calculate-score">${t('hostManaging.stopTimer')}</button></div>`
+          : ''}
+      </section>
+    </main>
+  `
+
+  root.querySelectorAll<HTMLButtonElement>('[data-guess-id]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const guessId = button.dataset.guessId ?? ''
+      const answerSlot = button.dataset.answerSlot as 'A' | 'B'
+      handleGuess(guessId, answerSlot)
+      renderApp()
+    })
+  })
+
+  root.querySelector<HTMLButtonElement>('[data-role="calculate-score"]')?.addEventListener('click', () => {
+    calculateScores()
+  })
+}
+
 function renderPlayerGuessing(): void {
+  if (state.finalMatchup) {
+    renderFinalMatchupGuessing()
+    return
+  }
+
   // In host-as-player rooms, the current asker controls the round, not necessarily the host account.
   const canControlRound = state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host'
   // Players already revealed as a correct answer in an earlier round are no longer valid guesses.
@@ -1958,11 +2097,13 @@ function renderRoundEnd(): void {
   const sortedPlayers = [...state.players].sort((a, b) => b.score - a.score)
   const myResult = state.roundResults.find((result) => result.guesserName === getCurrentPlayer()?.name)
   const isEligibleToGuess = state.role === 'player'
-    && state.currentPlayerId !== state.answerAuthorId
     && state.currentPlayerId !== state.askingPlayerId
-  const overlayKind: ResultOverlayKind | null = myResult
-    ? myResult.correct ? 'success' : 'fail'
-    : isEligibleToGuess ? 'no-guess' : null
+    && (state.finalMatchup ? !state.finalMatchup.authorIds.includes(state.currentPlayerId) : state.currentPlayerId !== state.answerAuthorId)
+  const overlayKind: ResultOverlayKind | null = state.finalMatchup?.autoRevealed
+    ? null
+    : myResult
+      ? myResult.correct ? 'success' : 'fail'
+      : isEligibleToGuess ? 'no-guess' : null
   const canAdvanceRound = state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host'
 
   root.innerHTML = `
@@ -1992,33 +2133,55 @@ function renderRoundEnd(): void {
           <h2>${t('roundEnd.results')}</h2>
         </div>
 
-        <div class="mini-card">
-          <span>${t('roundEnd.answerWas')}</span>
-          <strong>"${state.selectedAnswer}"</strong>
-        </div>
-
         ${renderQuestionAskerTag()}
 
-        <div class="mini-card">
-          <span>${t('roundEnd.writtenBy')}</span>
-          <strong>${(() => {
-            const author = state.players.find((player) => player.id === state.answerAuthorId)
-            return author ? `${formatPlayerAvatar(author)} ${author.name}` : t('roundEnd.unknown')
-          })()}</strong>
-        </div>
+        ${state.finalMatchup
+          ? state.finalMatchup.answers
+              .map((answer) => {
+                const author = state.players.find((player) => player.id === state.finalMatchup?.truth?.[answer.slot])
+                return `
+                  <div class="mini-card">
+                    <span>${t('finalMatchup.answerLabel', { slot: answer.slot })}</span>
+                    <strong>"${answer.text}"</strong>
+                  </div>
+                  <div class="mini-card">
+                    <span>${t('roundEnd.writtenBy')}</span>
+                    <strong>${author ? `${formatPlayerAvatar(author)} ${author.name}` : t('roundEnd.unknown')}</strong>
+                  </div>
+                `
+              })
+              .join('')
+          : `
+            <div class="mini-card">
+              <span>${t('roundEnd.answerWas')}</span>
+              <strong>"${state.selectedAnswer}"</strong>
+            </div>
 
-        <div class="result-list">
-          ${state.roundResults
-            .map(
-              (result) => `
-                <div class="result-row ${result.correct ? 'success' : 'fail'}">
-                  <span>${t('roundEnd.guessedLine', { guesser: result.guesserName, guessed: result.guessedName })}</span>
-                  <strong>${result.correct ? t('roundEnd.pointsEarned', { points: result.points }) : t('roundEnd.noPoints')}</strong>
-                </div>
-              `,
-            )
-            .join('')}
-        </div>
+            <div class="mini-card">
+              <span>${t('roundEnd.writtenBy')}</span>
+              <strong>${(() => {
+                const author = state.players.find((player) => player.id === state.answerAuthorId)
+                return author ? `${formatPlayerAvatar(author)} ${author.name}` : t('roundEnd.unknown')
+              })()}</strong>
+            </div>
+          `}
+
+        ${state.finalMatchup?.autoRevealed
+          ? `<div class="mini-card"><span>${t('finalMatchup.autoRevealed')}</span></div>`
+          : `
+            <div class="result-list">
+              ${state.roundResults
+                .map(
+                  (result) => `
+                    <div class="result-row ${result.correct ? 'success' : 'fail'}">
+                      <span>${result.answerSlot ? t('finalMatchup.guessedLine', { guesser: result.guesserName, guessed: result.guessedName, slot: result.answerSlot }) : t('roundEnd.guessedLine', { guesser: result.guesserName, guessed: result.guessedName })}</span>
+                      <strong>${result.correct ? t('roundEnd.pointsEarned', { points: result.points }) : t('roundEnd.noPoints')}</strong>
+                    </div>
+                  `,
+                )
+                .join('')}
+            </div>
+          `}
 
         ${(() => {
           if (!myResult) {
@@ -2395,6 +2558,7 @@ async function initializeDemoMode(): Promise<void> {
     state.hostIsPlayer = demoRoomState.hostIsPlayer ?? false
     state.askingPlayerId = demoRoomState.askingPlayerId ?? null
     state.pendingNextAskerId = demoRoomState.pendingNextAskerId ?? null
+    state.finalMatchup = demoRoomState.finalMatchup ?? null
     // Demo-only: lets a fixture show either the "your turn" overlay or the question form beneath it.
     state.askerOverlayConfirmed = demoConfig.askerOverlayConfirmed ?? true
     

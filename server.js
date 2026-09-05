@@ -117,6 +117,10 @@ function safePlayer(player) {
 
 // Only answer authors are eligible, excluding those revealed in an earlier round and the current asker.
 function getEligibleGuessTargetIds(room) {
+  if (room.finalMatchup) {
+    return new Set(room.finalMatchup.authorIds);
+  }
+
   const revealedAuthorIds = new Set(
     room.answers
       .map((answer) => answer.playerId)
@@ -141,7 +145,8 @@ function makeRoomState(room) {
     phase: room.phase,
     answerRoundNumber: room.answerRoundNumber,
     question: room.question,
-    answerAuthorId: room.answerAuthorId,
+    // Withheld while guessing is live, otherwise a client could read the correct author off the network payload.
+    answerAuthorId: room.phase === 'guessing' ? null : room.answerAuthorId,
     selectedAnswer: room.selectedAnswer,
     activeGuesserIndex: room.activeGuesserIndex,
     timeLeft: room.timeLeft,
@@ -159,6 +164,14 @@ function makeRoomState(room) {
     hostIsPlayer: room.hostIsPlayer,
     askingPlayerId: room.askingPlayerId,
     pendingNextAskerId: room.pendingNextAskerId,
+    finalMatchup: room.finalMatchup
+      ? {
+          answers: room.finalMatchup.answers,
+          authorIds: room.finalMatchup.authorIds,
+          autoRevealed: room.finalMatchup.autoRevealed,
+          truth: room.phase === 'guessing' ? null : room.finalMatchup.truth,
+        }
+      : null,
   };
 }
 
@@ -346,6 +359,7 @@ function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvata
     });
   }
 
+  room.finalMatchup = null;
   rooms.set(code, room);
   return room;
 }
@@ -465,7 +479,11 @@ function startRound(room, customQuestion = '') {
   if (room.players.length < 1) {
     return;
   }
-  if (room.hostIsPlayer && room.players.length < 2) {
+  // Guessing requires at least 3 submitted answers, so at least that many non-asker players are needed.
+  if (room.hostIsPlayer && room.players.length < 4) {
+    return;
+  }
+  if (!room.hostIsPlayer && room.players.length < 3) {
     return;
   }
 
@@ -496,6 +514,7 @@ function startRound(room, customQuestion = '') {
   room.activeGuesserIndex = 0;
   room.playerTurnIndex = 0;
   room.timeLeft = 0;
+  room.finalMatchup = null;
 
   room.players.forEach((player) => {
     player.score = player.score || 0;
@@ -519,7 +538,8 @@ function pickNextAsker(room) {
 
 // Between questions in a host-as-player room: hands the "ask" duty to the score leader without resetting the game.
 function continueToNextQuestion(room) {
-  if (room.players.length < 2) {
+  // Same minimum as startRound: guessing needs at least 3 non-asker players.
+  if (room.players.length < 4) {
     return;
   }
 
@@ -542,6 +562,7 @@ function continueToNextQuestion(room) {
   room.answerQueue = [];
   room.currentAnswer = null;
   room.roundResults = [];
+  room.finalMatchup = null;
 
   broadcastRoom(room);
 }
@@ -563,6 +584,7 @@ function startNewGame(room) {
   room.answerQueue = [];
   room.currentAnswer = null;
   room.roundResults = [];
+  room.finalMatchup = null;
   // player scores are intentionally left untouched so totals keep aggregating across games
 
   broadcastRoom(room);
@@ -591,9 +613,59 @@ function prepareCurrentAnswer(room) {
     room.timeLeft = 0;
     room.answerAuthorId = null;
     room.selectedAnswer = '';
+    room.finalMatchup = null;
     clearGuessTimeout(room);
     clearGuessCountdown(room);
     emitGameEndedIfInProgress(room);
+    broadcastRoom(room);
+    return;
+  }
+
+  // Exactly 2 answers left would otherwise mean a single-candidate, zero-suspense final guess - pair them up instead.
+  if (room.answerQueue.length === 2) {
+    const [answerA, answerB] = room.answerQueue.splice(0, 2);
+    room.currentAnswer = null;
+    room.answerAuthorId = null;
+    room.selectedAnswer = '';
+    room.guesses = [];
+    room.activeGuesserIndex = 0;
+    room.answerRoundNumber = room.answers.length;
+    room.timeLeft = 0;
+    room.finalMatchup = {
+      answers: [
+        { slot: 'A', text: answerA.text },
+        { slot: 'B', text: answerB.text },
+      ],
+      // Shuffled so the display order never hints at the true pairing.
+      authorIds: Math.random() < 0.5 ? [answerA.playerId, answerB.playerId] : [answerB.playerId, answerA.playerId],
+      truth: { A: answerA.playerId, B: answerB.playerId },
+      autoRevealed: false,
+    };
+
+    const eligibleGuesserCount = room.players.filter(
+      (player) => player.id !== room.askingPlayerId && player.id !== answerA.playerId && player.id !== answerB.playerId,
+    ).length;
+
+    clearGuessTimeout(room);
+    clearGuessCountdown(room);
+
+    if (eligibleGuesserCount === 0) {
+      // Both remaining authors already know the pairing and nobody else is left to guess - nothing to score.
+      room.finalMatchup.autoRevealed = true;
+      room.roundResults = [];
+      room.phase = 'round-end';
+      broadcastRoom(room);
+      return;
+    }
+
+    room.guessCountdownEndsAt = Date.now() + GUESS_COUNTDOWN_MS;
+    room.guessCountdownHandle = setTimeout(() => {
+      room.guessCountdownHandle = null;
+      room.guessCountdownEndsAt = null;
+      armGuessTimeout(room);
+      broadcastRoom(room);
+    }, GUESS_COUNTDOWN_MS);
+    room.guessCountdownHandle.unref?.();
     broadcastRoom(room);
     return;
   }
@@ -625,7 +697,8 @@ function prepareCurrentAnswer(room) {
 }
 
 function lockAnswers(room) {
-  if (room.phase !== 'answer-collection' || room.answers.length === 0) {
+  // A pool of 1-2 answers can only ever produce trivial single-candidate guesses - require at least 3.
+  if (room.phase !== 'answer-collection' || room.answers.length < 3) {
     return;
   }
 
@@ -653,17 +726,17 @@ function calculateRoundScores(room) {
   clearGuessTimeout(room);
   clearGuessCountdown(room);
 
-  if (room.phase !== 'guessing' || !room.currentAnswer) {
+  if (room.phase !== 'guessing' || (!room.currentAnswer && !room.finalMatchup)) {
     return;
   }
 
-  const answerEntry = room.currentAnswer;
-  const correctPlayerId = answerEntry.playerId;
+  const correctPlayerId = room.finalMatchup ? null : room.currentAnswer.playerId;
 
   let correctRank = 0;
   room.roundResults = room.guesses.map((guess) => {
     const guesser = findPlayerById(room, guess.guesserId);
-    const isCorrect = guess.guessedId === correctPlayerId;
+    const targetAuthorId = room.finalMatchup ? room.finalMatchup.truth[guess.answerSlot] : correctPlayerId;
+    const isCorrect = guess.guessedId === targetAuthorId;
     let points = 0;
 
     if (isCorrect) {
@@ -680,6 +753,7 @@ function calculateRoundScores(room) {
       guessedName: guess.guessedName,
       correct: isCorrect,
       points,
+      ...(room.finalMatchup ? { answerSlot: guess.answerSlot } : {}),
     };
   });
 
@@ -699,6 +773,7 @@ function advanceGuessRound(room) {
     room.timeLeft = 0;
     room.answerAuthorId = null;
     room.selectedAnswer = '';
+    room.finalMatchup = null;
     broadcastRoom(room);
     return;
   }
@@ -751,26 +826,36 @@ function submitAnswer(room, playerId, answerText) {
   broadcastRoom(room);
 }
 
-function evaluateGuess(room, guesserId, guessTargetId) {
+function evaluateGuess(room, guesserId, guessTargetId, answerSlot) {
   if (room.phase !== 'guessing') {
     return;
   }
 
-  const currentAnswer = room.currentAnswer;
   const guesser = findPlayerById(room, guesserId);
   const target = findPlayerById(room, guessTargetId);
 
-  if (!currentAnswer || !guesser || !target) {
+  if (!guesser || !target || guesserId === room.askingPlayerId || guessTargetId === guesserId) {
     return;
   }
 
-  if (guesserId === room.askingPlayerId || guesserId === currentAnswer.playerId || guessTargetId === guesserId) {
-    return;
-  }
+  if (room.finalMatchup) {
+    // Both remaining authors already know the true pairing, so they can't guess this round.
+    if (
+      (answerSlot !== 'A' && answerSlot !== 'B')
+      || room.finalMatchup.authorIds.includes(guesserId)
+      || !room.finalMatchup.authorIds.includes(guessTargetId)
+    ) {
+      return;
+    }
+  } else {
+    if (!room.currentAnswer || guesserId === room.currentAnswer.playerId) {
+      return;
+    }
 
-  // Reject guesses against players already revealed as the correct answer in an earlier round.
-  if (!getEligibleGuessTargetIds(room).has(guessTargetId)) {
-    return;
+    // Reject guesses against players already revealed as the correct answer in an earlier round.
+    if (!getEligibleGuessTargetIds(room).has(guessTargetId)) {
+      return;
+    }
   }
 
   const existingGuess = room.guesses.find((entry) => entry.guesserId === guesserId);
@@ -785,6 +870,7 @@ function evaluateGuess(room, guesserId, guessTargetId) {
     guessedName: target.name,
     correct: false,
     points: 0,
+    ...(room.finalMatchup ? { answerSlot } : {}),
   });
 
   broadcastRoom(room);
@@ -1170,7 +1256,7 @@ wss.on('connection', (socket, request) => {
           if (!room) {
             return;
           }
-          evaluateGuess(room, socket.playerId, message.targetPlayerId);
+          evaluateGuess(room, socket.playerId, message.targetPlayerId, message.answerSlot);
           break;
         }
 

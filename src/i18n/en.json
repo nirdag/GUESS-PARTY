@@ -158,6 +158,16 @@
   "playerGuessing.selected": "Selected",
   "playerGuessing.noSelectionYet": "No selection yet",
 
+  "finalMatchup.eyebrow": "Final round!",
+  "finalMatchup.currentTurn": "Last two answers",
+  "finalMatchup.matchThem": "Match each answer to who wrote it",
+  "finalMatchup.answerLabel": "Answer {slot}",
+  "finalMatchup.guessThisPerson": "Wrote this one",
+  "finalMatchup.youAlreadyKnow": "You already know who wrote these - waiting for the others to guess.",
+  "finalMatchup.guessedLabel": "guessed {name} for answer {slot}",
+  "finalMatchup.guessedLine": "{guesser} guessed {guessed} for answer {slot}",
+  "finalMatchup.autoRevealed": "Nobody else was left to guess this one, so no points were up for grabs.",
+
   "guessIntro.getReady": "Get ready to guess!",
 
   "askQuestion.overlayEyebrow": "Your turn",
