@@ -18,6 +18,11 @@ async function checkpoint(client: Client, label: string): Promise<void> {
     await client.page.waitForTimeout(stepDelay)
   }
 
+  await client.page.screenshot({
+    path: test.info().outputPath(`${label}-${client.name}.png`),
+    fullPage: true,
+  })
+
   if (process.env.E2E_PAUSE === '1') {
     await client.page.pause()
   }
