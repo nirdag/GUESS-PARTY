@@ -206,7 +206,7 @@
 
   "gameEnd.complete": "Question complete",
   "gameEnd.finished": "All guessing rounds finished!",
-  "gameEnd.topPerformers": "Results for this round",
+  "gameEnd.finalScores": "Final scores",
   "gameEnd.gold": "🥇 Gold",
   "gameEnd.silver": "🥈 Silver",
   "gameEnd.bronze": "🥉 Bronze",

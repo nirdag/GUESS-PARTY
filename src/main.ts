@@ -2207,7 +2207,6 @@ function renderRoundEnd(): void {
 
 function renderGameEnd(): void {
   const sortedPlayers = [...state.players].sort((a, b) => b.score - a.score)
-  const topThree = sortedPlayers.slice(0, 3)
   const pendingNextAsker = state.players.find((player) => player.id === state.pendingNextAskerId)
 
   root.innerHTML = `
@@ -2217,32 +2216,16 @@ function renderGameEnd(): void {
         <p class="eyebrow">${t('gameEnd.complete')}</p>
         <h1>${t('gameEnd.finished')}</h1>
         <p class="subtitle">The host can ask another question to continue playing.</p>
+        <div class="section-head">
+          <h2>${t('gameEnd.finalScores')}</h2>
+        </div>
 
         <div class="leaderboard">
           ${sortedPlayers
             .map(
               (player, index) => `
                 <div class="leaderboard-row ${index === 0 ? 'winner' : index === 1 ? 'second' : index === 2 ? 'third' : ''}">
-                  <span>#${index + 1} ${formatPlayerAvatar(player)} ${player.name}</span>
-                  <strong>${formatScore(player.score)}</strong>
-                </div>
-              `,
-            )
-            .join('')}
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="section-head">
-          <h2>${t('gameEnd.topPerformers')}</h2>
-        </div>
-
-        <div class="result-list">
-          ${topThree
-            .map(
-              (player, index) => `
-                <div class="result-row success">
-                  <span>${[t('gameEnd.gold'), t('gameEnd.silver'), t('gameEnd.bronze')][index]} — ${formatPlayerAvatar(player)} ${player.name}</span>
+                  <span>${[t('gameEnd.gold'), t('gameEnd.silver'), t('gameEnd.bronze')][index] ?? `#${index + 1}`} ${formatPlayerAvatar(player)} ${player.name}</span>
                   <strong>${formatScore(player.score)}</strong>
                 </div>
               `,

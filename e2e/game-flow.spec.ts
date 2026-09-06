@@ -10,7 +10,8 @@ const hostCredentials = {
   email: 'e2e-host@example.com',
   password: 'e2e-password-123',
 }
-const playerNames = ['Alice', 'Bob', 'Charlie']
+const playerNames = ['Alice', 'Bob', 'Charlie', 'Dana']
+const scoreTiers = [120, 100, 80]
 const stepDelay = Number(process.env.E2E_STEP_DELAY || 0)
 
 async function checkpoint(client: Client, label: string): Promise<void> {
@@ -40,7 +41,59 @@ async function createClient(browser: Browser, name: string): Promise<Client> {
   return { context, page, name }
 }
 
-test('host and three players can complete a live game', async ({ browser, baseURL }) => {
+function addScore(scores: Map<string, number>, player: Client, points: number): void {
+  scores.set(player.name, (scores.get(player.name) ?? 0) + points)
+}
+
+async function submitCorrectNormalGuesses(players: Client[], answers: Map<string, string>, scores: Map<string, number>): Promise<void> {
+  const answerText = await players[0].page.locator('.answer-reveal strong').innerText()
+  const answerAuthor = [...answers].find(([, answer]) => answer === answerText)?.[0]
+  expect(answerAuthor, `Unknown answer displayed: ${answerText}`).toBeTruthy()
+
+  for (const [index, player] of players.filter((player) => player.name !== answerAuthor).entries()) {
+    await player.page.locator(`[data-guess-id]:has-text("${answerAuthor}")`).click()
+    addScore(scores, player, scoreTiers[index])
+  }
+}
+
+async function completeQuestion(host: Client, players: Client[], questionNumber: number, scores: Map<string, number>): Promise<void> {
+  const question = `Question ${questionNumber}: what makes a game night memorable?`
+  const answers = new Map(players.map((player) => [player.name, `Question ${questionNumber} answer from ${player.name}`]))
+
+  await host.page.locator('#host-question').fill(question)
+  await host.page.locator('#host-question-form').getByRole('button', { name: 'Save question' }).click()
+  await host.page.locator('[data-role="start-round"]').click()
+  await checkpoint(host, `question-${questionNumber}-answer-collection`)
+
+  for (const player of players) {
+    await expect(player.page.locator('#player-answer')).toBeVisible()
+    await player.page.locator('#player-answer').fill(answers.get(player.name)!)
+    await player.page.locator('[data-role="submit-answer"]').click()
+  }
+
+  await expect(host.page.locator('[data-role="lock-answers"]')).toBeEnabled()
+  await host.page.locator('[data-role="lock-answers"]').click()
+  await checkpoint(host, `question-${questionNumber}-guessing-started`)
+
+  for (let roundNumber = 1; roundNumber <= 2; roundNumber += 1) {
+    if (questionNumber === 1 && roundNumber === 1) {
+      await submitCorrectNormalGuesses(players, answers, scores)
+    }
+    await host.page.locator('[data-role="calculate-score"]').click()
+    await expect(host.page.locator('[data-role="next-round"]')).toBeVisible()
+    await checkpoint(host, `question-${questionNumber}-round-${roundNumber}-complete`)
+    await host.page.locator('[data-role="next-round"]').click()
+  }
+
+  await host.page.locator('[data-role="calculate-score"]').click()
+  await expect(host.page.locator('[data-role="next-round"]')).toBeVisible()
+  await checkpoint(host, `question-${questionNumber}-round-3-complete`)
+  await host.page.locator('[data-role="next-round"]').click()
+  await expect(host.page.locator('[data-role="new-game"]')).toBeVisible()
+  await checkpoint(host, `question-${questionNumber}-game-complete`)
+}
+
+test('host and four players can complete two live questions', async ({ browser, baseURL }) => {
   const clients: Client[] = []
   const host = await createClient(browser, 'Host')
   const apiURL = baseURL?.replace(':5173', ':8081')
@@ -68,43 +121,36 @@ test('host and three players can complete a live game', async ({ browser, baseUR
       await player.page.locator('#join-setup-form').getByRole('button', { name: 'Join room' }).click()
       await expect(player.page.locator('.player-list')).toContainText(name)
     }
-    await expect(host.page.locator('.player-list .player-pill')).toHaveCount(3)
+    const players = clients.slice(1)
+    await expect(host.page.locator('.player-list .player-pill')).toHaveCount(4)
     await checkpoint(host, 'all-players-joined')
 
-    await host.page.locator('#host-question').fill('What makes a perfect game night?')
-    await host.page.locator('#host-question-form').getByRole('button', { name: 'Save question' }).click()
-    await host.page.locator('[data-role="start-round"]').click()
-    await checkpoint(host, 'answer-collection-started')
+    const expectedScores = new Map(playerNames.map((name) => [name, 0]))
+  await completeQuestion(host, players, 1, expectedScores)
 
-    for (const [index, player] of clients.slice(1).entries()) {
-      await expect(player.page.locator('#player-answer')).toBeVisible()
-      await player.page.locator('#player-answer').fill(`Answer from ${playerNames[index]}`)
-      await player.page.locator('[data-role="submit-answer"]').click()
-    }
+    await host.page.locator('[data-role="new-game"]').click()
+    await expect(host.page.locator('#host-question')).toBeVisible()
 
-    await expect(host.page.locator('[data-role="lock-answers"]')).toBeEnabled()
-    await host.page.locator('[data-role="lock-answers"]').click()
-    await checkpoint(host, 'guessing-started')
+    await completeQuestion(host, players, 2, expectedScores)
 
-    // 3 submitted answers resolve as 1 normal round + 1 final matchup round (the last two answers paired together).
-    for (let roundIndex = 0; roundIndex < playerNames.length - 1; roundIndex += 1) {
-      for (const player of clients.slice(1)) {
-        const guessCards = player.page.locator('[data-guess-id]')
-        if (await guessCards.count() > 0) {
-          await expect(guessCards.first()).toBeVisible()
-          await guessCards.first().click()
-        }
-      }
+    await expect(host.page.getByRole('heading', { name: 'Final scores' })).toBeVisible()
+    await expect(host.page.locator('.leaderboard')).toHaveCount(1)
+    await expect(host.page.locator('.leaderboard-row')).toHaveCount(4)
+    await expect(host.page.locator('.leaderboard-row').nth(0)).toContainText('Gold')
+    await expect(host.page.locator('.leaderboard-row').nth(1)).toContainText('Silver')
+    await expect(host.page.locator('.leaderboard-row').nth(2)).toContainText('Bronze')
+    await expect(host.page.locator('.leaderboard-row').nth(3)).toContainText('#4')
+    await expect(host.page.locator('.result-list')).toHaveCount(0)
 
-      await host.page.locator('[data-role="calculate-score"]').click()
-      await expect(host.page.locator('[data-role="next-round"]')).toBeVisible()
-      await checkpoint(host, `round-${roundIndex + 1}-complete`)
-      await host.page.locator('[data-role="next-round"]').click()
-    }
-
-    await expect(host.page.locator('[data-role="new-game"]')).toBeVisible()
-    await expect(host.page.locator('.leaderboard-row')).toHaveCount(3)
-    await checkpoint(host, 'game-complete')
+    const scoreRows = await host.page.locator('.leaderboard-row').allTextContents()
+    const actualScores = new Map(playerNames.map((name) => {
+      const row = scoreRows.find((text) => text.includes(name))
+      const points = Number(row?.match(/(\d+) pts/)?.[1])
+      return [name, points]
+    }))
+    expect(actualScores).toEqual(expectedScores)
+    expect(new Set(actualScores.values()).size).toBe(4)
+    await checkpoint(host, 'two-question-game-complete')
   } finally {
     await Promise.all(clients.map((client) => client.context.close()))
   }

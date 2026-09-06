@@ -206,7 +206,7 @@
 
   "gameEnd.complete": "השאלה הושלמה",
   "gameEnd.finished": "כל סבבי הניחושים הסתיימו!",
-  "gameEnd.topPerformers": "תוצאות סבב זה",
+  "gameEnd.finalScores": "תוצאות סופיות",
   "gameEnd.gold": "🥇 זהב",
   "gameEnd.silver": "🥈 כסף",
   "gameEnd.bronze": "🥉 ארד",
