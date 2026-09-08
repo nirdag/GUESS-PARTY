@@ -17,6 +17,13 @@ type GalleryQuestion = {
   text: string
 }
 
+type SuggestionEntry = {
+  id: string
+  playerId: string
+  playerName: string
+  text: string
+}
+
 type RoomSession = {
   roomCode: string
   role: Role
@@ -80,6 +87,9 @@ type RoomState = {
   askingPlayerId: string | null
   pendingNextAskerId: string | null
   finalMatchup: FinalMatchup | null
+  allowPlayerSuggestions: boolean
+  suggestedQuestions: SuggestionEntry[]
+  mySuggestedQuestions: SuggestionEntry[]
 }
 
 const app = document.querySelector<HTMLDivElement>('#app')
@@ -192,6 +202,10 @@ const state = {
   askingPlayerId: null as string | null,
   pendingNextAskerId: null as string | null,
   addSelfAsPlayer: false,
+  allowPlayerSuggestions: false,
+  suggestedQuestions: [] as SuggestionEntry[],
+  mySuggestedQuestions: [] as SuggestionEntry[],
+  suggestionDraft: '',
   askerOverlayConfirmed: false,
   askQuestionDraft: '',
   adminError: '',
@@ -519,6 +533,9 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   state.hostIsPlayer = serverState.hostIsPlayer ?? state.hostIsPlayer
   state.pendingNextAskerId = serverState.pendingNextAskerId ?? null
   state.finalMatchup = serverState.finalMatchup ?? null
+  state.allowPlayerSuggestions = serverState.allowPlayerSuggestions ?? state.allowPlayerSuggestions
+  state.suggestedQuestions = serverState.suggestedQuestions ?? state.suggestedQuestions
+  state.mySuggestedQuestions = serverState.mySuggestedQuestions ?? state.mySuggestedQuestions
   state.hasSubmittedAnswer = state.answers.some((answer) => answer.playerId === state.currentPlayerId)
 
   if (serverState.askingPlayerId !== undefined && serverState.askingPlayerId !== state.askingPlayerId) {
@@ -681,7 +698,7 @@ function renderGuessIntroOverlay(): string {
   `
 }
 
-function createRoomSession(name: string, language: LanguageCode, avatar: string, guessTimeoutSeconds: number, addSelfAsPlayer: boolean): void {
+function createRoomSession(name: string, language: LanguageCode, avatar: string, guessTimeoutSeconds: number, addSelfAsPlayer: boolean, allowPlayerSuggestions: boolean): void {
   const nextName = name.trim() || t('prompts.defaultHostName')
   state.playerName = nextName
   state.role = 'host'
@@ -689,18 +706,20 @@ function createRoomSession(name: string, language: LanguageCode, avatar: string,
   state.myAvatar = avatar
   state.guessTimeoutSeconds = guessTimeoutSeconds
   state.addSelfAsPlayer = addSelfAsPlayer
+  // Mutually exclusive with host-as-player: a rotating asker already writes their own question each round.
+  state.allowPlayerSuggestions = addSelfAsPlayer ? false : allowPlayerSuggestions
   setLanguage(language)
   shouldRestoreRoomSession = false
   clearStoredRoomSession()
   state.screen = 'lobby'
 
   if (socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds, addSelfAsPlayer }))
+    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds, addSelfAsPlayer, allowPlayerSuggestions: state.allowPlayerSuggestions }))
     return
   }
 
   queuedAction = () => {
-    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds, addSelfAsPlayer }))
+    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds, addSelfAsPlayer, allowPlayerSuggestions: state.allowPlayerSuggestions }))
   }
 
   renderApp()
@@ -811,6 +830,29 @@ function submitPlayerAnswer(answer: string): void {
   }
 
   sendSocketMessage('submit-answer', { playerId: state.currentPlayerId, answerText: answer })
+}
+
+function submitSuggestion(text: string): void {
+  if (!state.roomCode) {
+    return
+  }
+
+  const trimmed = text.trim()
+
+  if (trimmed.length < 8 || trimmed.length > 220) {
+    window.alert(t('prompts.questionTooShort'))
+    return
+  }
+
+  sendSocketMessage('suggest-question', { text: trimmed })
+}
+
+function withdrawSuggestion(suggestionId: string): void {
+  sendSocketMessage('delete-suggestion', { suggestionId })
+}
+
+function dismissSuggestion(suggestionId: string): void {
+  sendSocketMessage('dismiss-suggestion', { suggestionId })
 }
 
 function handleGuess(guessId: string, answerSlot?: 'A' | 'B'): void {
@@ -990,6 +1032,11 @@ function renderHostSetup(): void {
             <span>${t('hostSetup.addSelfLabel')}</span>
           </label>
           <small class="field-hint">${t('hostSetup.addSelfHint')}</small>
+          <label class="checkbox-field">
+            <input id="host-setup-allow-suggestions" type="checkbox" ${state.allowPlayerSuggestions ? 'checked' : ''} ${state.addSelfAsPlayer ? 'disabled' : ''} />
+            <span>${t('hostSetup.allowSuggestionsLabel')}</span>
+          </label>
+          <small class="field-hint">${t('hostSetup.allowSuggestionsHint')}</small>
           <button class="primary-button" type="submit">${t('hostSetup.submit')}</button>
         </form>
 
@@ -1026,12 +1073,26 @@ function renderHostSetup(): void {
   root.querySelector('[data-role="guess-time-decrease"]')?.addEventListener('click', () => updateGuessTime(-5))
   root.querySelector('[data-role="guess-time-increase"]')?.addEventListener('click', () => updateGuessTime(5))
 
+  // Mutually exclusive: a rotating asker already writes their own question, so suggestions have no host to hand them to.
+  const addSelfCheckbox = root.querySelector<HTMLInputElement>('#host-setup-add-self')
+  const allowSuggestionsCheckbox = root.querySelector<HTMLInputElement>('#host-setup-allow-suggestions')
+
+  addSelfCheckbox?.addEventListener('change', () => {
+    if (addSelfCheckbox.checked && allowSuggestionsCheckbox) {
+      allowSuggestionsCheckbox.checked = false
+      allowSuggestionsCheckbox.disabled = true
+    } else if (allowSuggestionsCheckbox) {
+      allowSuggestionsCheckbox.disabled = false
+    }
+  })
+
   root.querySelector<HTMLFormElement>('#host-setup-form')?.addEventListener('submit', (event) => {
     event.preventDefault()
     const name = root.querySelector<HTMLInputElement>('#host-setup-name')?.value ?? ''
     const language = (root.querySelector<HTMLSelectElement>('#host-setup-language')?.value ?? 'en') as LanguageCode
     const addSelfAsPlayer = root.querySelector<HTMLInputElement>('#host-setup-add-self')?.checked ?? false
-    createRoomSession(name, language, state.selectedAvatar, state.guessTimeoutSeconds, addSelfAsPlayer)
+    const allowPlayerSuggestions = root.querySelector<HTMLInputElement>('#host-setup-allow-suggestions')?.checked ?? false
+    createRoomSession(name, language, state.selectedAvatar, state.guessTimeoutSeconds, addSelfAsPlayer, allowPlayerSuggestions)
   })
 }
 
@@ -1370,6 +1431,101 @@ function renderAdminGallery(): void {
   })
 }
 
+// Host-only view of what players have suggested; used from the asker's lobby/ask-question panels.
+function renderSuggestionsPanel(): string {
+  return `
+    <div class="result-list suggestions-panel">
+      <div class="section-head">
+        <h2>${t('lobby.suggestionsTitle')}</h2>
+      </div>
+      ${state.suggestedQuestions.length > 0
+        ? state.suggestedQuestions
+            .map(
+              (suggestion) => `
+                <div class="result-row suggestion-row">
+                  <span>${suggestion.text} <small>— ${suggestion.playerName}</small></span>
+                  <div class="suggestion-actions">
+                    <button type="button" class="secondary-button" data-role="use-suggestion" data-question-text="${suggestion.text.replace(/"/g, '&quot;')}">${t('lobby.useSuggestion')}</button>
+                    <button type="button" class="ghost-button" data-role="dismiss-suggestion" data-suggestion-id="${suggestion.id}">${t('lobby.dismissSuggestion')}</button>
+                  </div>
+                </div>
+              `,
+            )
+            .join('')
+        : `<div class="result-row"><span>${t('lobby.suggestionsEmpty')}</span></div>`}
+    </div>
+  `
+}
+
+// Player-facing input for suggesting a question, plus their own pending list; used across lobby/round-end/game-end.
+function renderSuggestQuestionPanel(): string {
+  return `
+    <section class="panel suggest-question-panel">
+      <div class="section-head">
+        <h2>${t('lobby.suggestQuestionLabel')}</h2>
+      </div>
+      <form id="suggest-question-form" class="host-question-form">
+        <textarea id="suggest-question-input" rows="2" maxlength="220" placeholder="${t('lobby.suggestQuestionPlaceholder')}">${state.suggestionDraft}</textarea>
+        <div class="host-question-actions">
+          <button class="primary-button" type="submit">${t('lobby.submitSuggestion')}</button>
+        </div>
+      </form>
+
+      ${state.mySuggestedQuestions.length > 0
+        ? `
+          <div class="result-list">
+            <div class="section-head">
+              <h2>${t('lobby.mySuggestions')}</h2>
+            </div>
+            ${state.mySuggestedQuestions
+              .map(
+                (suggestion) => `
+                  <div class="result-row suggestion-row">
+                    <span>${suggestion.text}</span>
+                    <button type="button" class="ghost-button" data-role="withdraw-suggestion" data-suggestion-id="${suggestion.id}">${t('lobby.withdrawSuggestion')}</button>
+                  </div>
+                `,
+              )
+              .join('')}
+          </div>
+          `
+        : ''}
+    </section>
+  `
+}
+
+// Shared wiring for the suggestion panels rendered on lobby/round-end/game-end screens.
+function wireSuggestionPanels(): void {
+  root.querySelectorAll<HTMLButtonElement>('[data-role="use-suggestion"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.customQuestion = button.dataset.questionText ?? ''
+      renderApp()
+    })
+  })
+
+  root.querySelectorAll<HTMLButtonElement>('[data-role="dismiss-suggestion"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      dismissSuggestion(button.dataset.suggestionId ?? '')
+    })
+  })
+
+  root.querySelectorAll<HTMLButtonElement>('[data-role="withdraw-suggestion"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      withdrawSuggestion(button.dataset.suggestionId ?? '')
+    })
+  })
+
+  const suggestForm = root.querySelector<HTMLFormElement>('#suggest-question-form')
+  suggestForm?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const textarea = root.querySelector<HTMLTextAreaElement>('#suggest-question-input')
+    const value = textarea?.value ?? ''
+    submitSuggestion(value)
+    state.suggestionDraft = ''
+    renderApp()
+  })
+}
+
 function renderLobby(): void {
   const leaderboard = [...state.players].sort((a, b) => b.score - a.score)
   const hostQuestionIsValid = state.customQuestion.trim().length >= 8
@@ -1464,6 +1620,8 @@ function renderLobby(): void {
                 `
               : ''}
 
+            ${state.allowPlayerSuggestions ? renderSuggestionsPanel() : ''}
+
             <div class="rules-list">
               <div class="rule-item"><strong>1.</strong><span>${t('lobby.hostRule1')}</span></div>
               <div class="rule-item"><strong>2.</strong><span>${t('lobby.hostRule2')}</span></div>
@@ -1484,6 +1642,7 @@ function renderLobby(): void {
               <div class="rule-item"><strong>4.</strong><span>${t('lobby.playerRule4')}</span></div>
             </div>
           </section>
+          ${state.allowPlayerSuggestions && state.role === 'player' ? renderSuggestQuestionPanel() : ''}
           `}
 
       <section class="panel">
@@ -1574,6 +1733,8 @@ function renderLobby(): void {
       renderApp()
     })
   })
+
+  wireSuggestionPanels()
 }
 
 // Only meaningful in host-as-player rooms, where the question's author rotates each round.
@@ -2192,6 +2353,8 @@ function renderRoundEnd(): void {
 
         ${canAdvanceRound ? `<button class="primary-button next-round" type="button" data-role="next-round">${state.answerRoundNumber >= state.answers.length ? t('roundEnd.goToFinalBoard') : t('roundEnd.nextRound')}</button>` : ''}
       </section>
+
+      ${state.allowPlayerSuggestions && state.role === 'player' ? renderSuggestQuestionPanel() : ''}
     </main>
   `
 
@@ -2203,6 +2366,8 @@ function renderRoundEnd(): void {
   root.querySelector<HTMLButtonElement>('[data-role="next-round"]')?.addEventListener('click', () => {
     advanceAnswer()
   })
+
+  wireSuggestionPanels()
 }
 
 function renderGameEnd(): void {
@@ -2237,6 +2402,8 @@ function renderGameEnd(): void {
       ${pendingNextAsker ? `<section class="panel" role="status"><strong>${t('gameEnd.nextAsker', { name: pendingNextAsker.name })}</strong></section>` : ''}
 
       ${state.role === 'host' ? `<button class="primary-button next-round" type="button" data-role="new-game">${state.hostIsPlayer ? t('gameEnd.continueNextQuestion') : t('gameEnd.newGame')}</button>` : ''}
+
+      ${state.allowPlayerSuggestions && state.role === 'player' ? renderSuggestQuestionPanel() : ''}
     </main>
   `
 
@@ -2244,6 +2411,8 @@ function renderGameEnd(): void {
     state.customQuestion = ''
     requestNewGame()
   })
+
+  wireSuggestionPanels()
 }
 
 function renderApp(): void {

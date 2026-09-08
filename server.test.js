@@ -30,6 +30,12 @@ import {
   clearGuessCountdown,
   GUESS_TIMEOUT_SECONDS,
   GUESS_COUNTDOWN_MS,
+  addSuggestedQuestion,
+  removeSuggestedQuestion,
+  canSuggestQuestion,
+  canDeleteSuggestion,
+  canDismissSuggestion,
+  broadcastRoom,
 } from './server.js';
 
 // Mock room/player creation for testing
@@ -60,6 +66,8 @@ function createTestRoom() {
     guessCountdownHandle: null,
     gameStartedAt: null,
     questionsPlayedThisGame: 0,
+    allowPlayerSuggestions: false,
+    suggestedQuestions: [],
   };
 }
 
@@ -1436,5 +1444,197 @@ describe('HIGH: Final matchup (last two answers)', () => {
     calculateRoundScores(room);
     const revealedState = makeRoomState(room);
     expect(revealedState.finalMatchup.truth).toEqual(room.finalMatchup.truth);
+  });
+});
+
+describe('HIGH: Player-suggested questions', () => {
+  it('createRoom respects allowPlayerSuggestions, and forces it off when addSelfAsPlayer is set', () => {
+    const withSuggestions = createRoom({ hostName: 'Host', hostAccountId: 'host-account', allowPlayerSuggestions: true });
+    expect(withSuggestions.allowPlayerSuggestions).toBe(true);
+    expect(withSuggestions.suggestedQuestions).toEqual([]);
+
+    const mutuallyExclusive = createRoom({ hostName: 'Host', hostAccountId: 'host-account', addSelfAsPlayer: true, allowPlayerSuggestions: true });
+    expect(mutuallyExclusive.allowPlayerSuggestions).toBe(false);
+
+    const classic = createRoom({ hostName: 'Host', hostAccountId: 'host-account' });
+    expect(classic.allowPlayerSuggestions).toBe(false);
+  });
+
+  it('addSuggestedQuestion validates length and stores the suggestion', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', allowPlayerSuggestions: true });
+    const player = addPlayerToRoom(room, 'Alice');
+
+    expect(addSuggestedQuestion(room, player.id, player.name, 'short')).toBeNull();
+    expect(addSuggestedQuestion(room, player.id, player.name, 'a'.repeat(221))).toBeNull();
+
+    const suggestion = addSuggestedQuestion(room, player.id, player.name, 'What is your favorite childhood memory?');
+    expect(suggestion).toMatchObject({ playerId: player.id, playerName: 'Alice', text: 'What is your favorite childhood memory?' });
+    expect(room.suggestedQuestions).toHaveLength(1);
+  });
+
+  it('removeSuggestedQuestion removes by id and returns null for an unknown id', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', allowPlayerSuggestions: true });
+    const player = addPlayerToRoom(room, 'Alice');
+    const suggestion = addSuggestedQuestion(room, player.id, player.name, 'What is your favorite childhood memory?');
+
+    expect(removeSuggestedQuestion(room, 'not-a-real-id')).toBeNull();
+    expect(removeSuggestedQuestion(room, suggestion.id)).toMatchObject({ id: suggestion.id });
+    expect(room.suggestedQuestions).toHaveLength(0);
+  });
+
+  it('startRound only removes the suggestion whose text matches the committed question', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', allowPlayerSuggestions: true });
+    addPlayerToRoom(room, 'Alice');
+    addPlayerToRoom(room, 'Bob');
+    addPlayerToRoom(room, 'Carol');
+    const used = addSuggestedQuestion(room, 'p1', 'Alice', 'What is the best pizza topping?');
+    const unused = addSuggestedQuestion(room, 'p2', 'Bob', 'What is your dream vacation spot?');
+
+    startRound(room, used.text);
+
+    expect(room.suggestedQuestions.map((entry) => entry.id)).toEqual([unused.id]);
+  });
+
+  it('makeRoomState exposes the full suggestion list only to the host viewer, and each player only their own', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', allowPlayerSuggestions: true });
+    const alice = addPlayerToRoom(room, 'Alice');
+    const bob = addPlayerToRoom(room, 'Bob');
+    addSuggestedQuestion(room, alice.id, alice.name, 'What is your favorite childhood memory?');
+    addSuggestedQuestion(room, bob.id, bob.name, 'What is your biggest fear?');
+
+    const hostState = makeRoomState(room, room.hostId);
+    expect(hostState.suggestedQuestions).toHaveLength(2);
+
+    const aliceState = makeRoomState(room, alice.id);
+    expect(aliceState.suggestedQuestions).toHaveLength(0);
+    expect(aliceState.mySuggestedQuestions).toHaveLength(1);
+    expect(aliceState.mySuggestedQuestions[0].playerId).toBe(alice.id);
+  });
+
+  it('addSuggestedQuestion accepts exactly-boundary lengths and rejects one character over/under', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', allowPlayerSuggestions: true });
+    const player = addPlayerToRoom(room, 'Alice');
+
+    expect(addSuggestedQuestion(room, player.id, player.name, 'a'.repeat(7))).toBeNull();
+    expect(addSuggestedQuestion(room, player.id, player.name, 'a'.repeat(8))).not.toBeNull();
+    expect(addSuggestedQuestion(room, player.id, player.name, 'b'.repeat(220))).not.toBeNull();
+    expect(addSuggestedQuestion(room, player.id, player.name, 'b'.repeat(221))).toBeNull();
+  });
+
+  it('addSuggestedQuestion rejects whitespace-only input and stores the trimmed text', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', allowPlayerSuggestions: true });
+    const player = addPlayerToRoom(room, 'Alice');
+
+    expect(addSuggestedQuestion(room, player.id, player.name, '        ')).toBeNull();
+
+    const suggestion = addSuggestedQuestion(room, player.id, player.name, '  What is your favorite movie?  ');
+    expect(suggestion.text).toBe('What is your favorite movie?');
+  });
+
+  it('removeSuggestedQuestion returns null when the same id is removed twice', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', allowPlayerSuggestions: true });
+    const player = addPlayerToRoom(room, 'Alice');
+    const suggestion = addSuggestedQuestion(room, player.id, player.name, 'What is your favorite childhood memory?');
+
+    expect(removeSuggestedQuestion(room, suggestion.id)).not.toBeNull();
+    expect(removeSuggestedQuestion(room, suggestion.id)).toBeNull();
+  });
+
+  it('startRound clears every suggestion sharing the committed question text, and leaves the list untouched for a random bank question', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', allowPlayerSuggestions: true });
+    addPlayerToRoom(room, 'Alice');
+    addPlayerToRoom(room, 'Bob');
+    addPlayerToRoom(room, 'Carol');
+    addSuggestedQuestion(room, 'p1', 'Alice', 'What is the best pizza topping?');
+    addSuggestedQuestion(room, 'p2', 'Bob', 'What is the best pizza topping?');
+
+    startRound(room, 'What is the best pizza topping?');
+
+    expect(room.suggestedQuestions).toHaveLength(0);
+
+    const other = createRoom({ hostName: 'Host', hostAccountId: 'host-account', allowPlayerSuggestions: true });
+    addPlayerToRoom(other, 'Alice');
+    addPlayerToRoom(other, 'Bob');
+    addPlayerToRoom(other, 'Carol');
+    addSuggestedQuestion(other, 'p1', 'Alice', 'What is your dream vacation spot?');
+
+    startRound(other, '');
+
+    expect(other.suggestedQuestions).toHaveLength(1);
+  });
+
+  it('makeRoomState returns empty suggestion fields for every viewer when the feature is disabled or the viewer is unknown', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account' });
+    const alice = addPlayerToRoom(room, 'Alice');
+
+    const hostState = makeRoomState(room, room.hostId);
+    expect(hostState.suggestedQuestions).toEqual([]);
+    expect(hostState.mySuggestedQuestions).toEqual([]);
+
+    const enabledRoom = createRoom({ hostName: 'Host', hostAccountId: 'host-account', allowPlayerSuggestions: true });
+    addSuggestedQuestion(enabledRoom, alice.id, alice.name, 'What is your favorite childhood memory?');
+    const staleViewerState = makeRoomState(enabledRoom, 'no-such-player-id');
+    expect(staleViewerState.suggestedQuestions).toEqual([]);
+    expect(staleViewerState.mySuggestedQuestions).toEqual([]);
+  });
+
+  function createTestSocket(playerId) {
+    return {
+      readyState: 1,
+      playerId,
+      sent: [],
+      send(message) {
+        this.sent.push(JSON.parse(message));
+      },
+    };
+  }
+
+  it('broadcastRoom sends the full suggestion list only to the host socket, and each player socket only their own', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', allowPlayerSuggestions: true });
+    const alice = addPlayerToRoom(room, 'Alice');
+    addSuggestedQuestion(room, alice.id, alice.name, 'What is your favorite childhood memory?');
+
+    const hostSocket = createTestSocket(room.hostId);
+    const aliceSocket = createTestSocket(alice.id);
+    room.clients.add(hostSocket);
+    room.clients.add(aliceSocket);
+
+    broadcastRoom(room);
+
+    expect(hostSocket.sent[0].state.suggestedQuestions).toHaveLength(1);
+    expect(aliceSocket.sent[0].state.suggestedQuestions).toHaveLength(0);
+    expect(aliceSocket.sent[0].state.mySuggestedQuestions).toHaveLength(1);
+  });
+
+  describe('authorization guards', () => {
+    it('canSuggestQuestion requires the feature enabled, a playerId, and an existing player', () => {
+      const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', allowPlayerSuggestions: true });
+      const player = addPlayerToRoom(room, 'Alice');
+      const disabledRoom = createRoom({ hostName: 'Host', hostAccountId: 'host-account' });
+
+      expect(canSuggestQuestion(room, player.id)).toBe(true);
+      expect(canSuggestQuestion(disabledRoom, room.hostId)).toBe(false);
+      expect(canSuggestQuestion(room, undefined)).toBe(false);
+      expect(canSuggestQuestion(room, room.hostId)).toBe(false);
+    });
+
+    it('canDeleteSuggestion only allows the suggestion\'s own author', () => {
+      const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', allowPlayerSuggestions: true });
+      const alice = addPlayerToRoom(room, 'Alice');
+      const bob = addPlayerToRoom(room, 'Bob');
+      const suggestion = addSuggestedQuestion(room, alice.id, alice.name, 'What is your favorite childhood memory?');
+
+      expect(canDeleteSuggestion(room, 'not-a-real-id', alice.id)).toBe(false);
+      expect(canDeleteSuggestion(room, suggestion.id, bob.id)).toBe(false);
+      expect(canDeleteSuggestion(room, suggestion.id, alice.id)).toBe(true);
+    });
+
+    it('canDismissSuggestion only allows the room\'s own host account', () => {
+      const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', allowPlayerSuggestions: true });
+
+      expect(canDismissSuggestion(room, 'some-other-account')).toBe(false);
+      expect(canDismissSuggestion(room, null)).toBe(false);
+      expect(canDismissSuggestion(room, 'host-account')).toBe(true);
+    });
   });
 });

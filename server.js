@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { createAuthService } from './auth.js';
 import { isAdminEmail } from './admins.js';
-import { createQuestionService } from './questions.js';
+import { createQuestionService, minQuestionLength, maxQuestionLength } from './questions.js';
 import { sendVerificationEmail } from './emailService.js';
 import { logger } from './logger.js';
 
@@ -115,6 +115,57 @@ function safePlayer(player) {
   };
 }
 
+function publicSuggestion(suggestion) {
+  return {
+    id: suggestion.id,
+    playerId: suggestion.playerId,
+    playerName: suggestion.playerName,
+    text: suggestion.text,
+  };
+}
+
+function addSuggestedQuestion(room, playerId, playerName, text) {
+  const trimmed = String(text || '').trim();
+  if (trimmed.length < minQuestionLength || trimmed.length > maxQuestionLength) {
+    return null;
+  }
+
+  const suggestion = {
+    id: crypto.randomUUID(),
+    playerId,
+    playerName,
+    text: trimmed,
+    createdAt: Date.now(),
+  };
+  room.suggestedQuestions.push(suggestion);
+  return suggestion;
+}
+
+function removeSuggestedQuestion(room, suggestionId) {
+  const index = room.suggestedQuestions.findIndex((entry) => entry.id === suggestionId);
+  if (index === -1) {
+    return null;
+  }
+  const [removed] = room.suggestedQuestions.splice(index, 1);
+  return removed;
+}
+
+function canSuggestQuestion(room, playerId) {
+  return Boolean(room && room.allowPlayerSuggestions && playerId && findPlayerById(room, playerId));
+}
+
+function canDeleteSuggestion(room, suggestionId, playerId) {
+  if (!room || !playerId) {
+    return false;
+  }
+  const existing = room.suggestedQuestions.find((entry) => entry.id === suggestionId);
+  return Boolean(existing && existing.playerId === playerId);
+}
+
+function canDismissSuggestion(room, hostAccountId) {
+  return Boolean(room && hostAccountId && room.hostAccountId === hostAccountId);
+}
+
 // Only answer authors are eligible, excluding those revealed in an earlier round and the current asker.
 function getEligibleGuessTargetIds(room) {
   if (room.finalMatchup) {
@@ -139,7 +190,8 @@ function getEligibleGuessTargetIds(room) {
   );
 }
 
-function makeRoomState(room) {
+function makeRoomState(room, viewerPlayerId = null) {
+  const isHostViewer = viewerPlayerId !== null && viewerPlayerId === room.hostId;
   return {
     code: room.code,
     phase: room.phase,
@@ -164,6 +216,12 @@ function makeRoomState(room) {
     hostIsPlayer: room.hostIsPlayer,
     askingPlayerId: room.askingPlayerId,
     pendingNextAskerId: room.pendingNextAskerId,
+    allowPlayerSuggestions: room.allowPlayerSuggestions,
+    // Host-only: the full pending list. Other players only ever see their own submissions.
+    suggestedQuestions: isHostViewer ? room.suggestedQuestions.map(publicSuggestion) : [],
+    mySuggestedQuestions: room.allowPlayerSuggestions
+      ? room.suggestedQuestions.filter((entry) => entry.playerId === viewerPlayerId).map(publicSuggestion)
+      : [],
     finalMatchup: room.finalMatchup
       ? {
           answers: room.finalMatchup.answers,
@@ -176,11 +234,9 @@ function makeRoomState(room) {
 }
 
 function broadcastRoom(room) {
-  const payload = JSON.stringify({ type: 'room-state', state: makeRoomState(room) });
-
   room.clients.forEach((client) => {
     if (client.readyState === 1) {
-      client.send(payload);
+      client.send(JSON.stringify({ type: 'room-state', state: makeRoomState(room, client.playerId) }));
     }
   });
 }
@@ -305,7 +361,7 @@ function normalizeGuessTimeoutSeconds(value) {
   return GUESS_TIMEOUT_SECONDS;
 }
 
-function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvatar, guessTimeoutSeconds, addSelfAsPlayer = false }) {
+function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvatar, guessTimeoutSeconds, addSelfAsPlayer = false, allowPlayerSuggestions = false }) {
   const code = createRoomCode();
   const hostId = `${code}-host-${Date.now()}`;
   const normalizedHostName = (hostName || 'Host').trim() || 'Host';
@@ -346,6 +402,9 @@ function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvata
     askingPlayerId: addSelfAsPlayer ? hostId : null,
     lastAskerId: addSelfAsPlayer ? hostId : null,
     pendingNextAskerId: null,
+    // Mutually exclusive with hostIsPlayer: a rotating asker already writes their own question each round.
+    allowPlayerSuggestions: addSelfAsPlayer ? false : Boolean(allowPlayerSuggestions),
+    suggestedQuestions: [],
   };
 
   if (room.hostIsPlayer) {
@@ -519,6 +578,9 @@ function startRound(room, customQuestion = '') {
   room.players.forEach((player) => {
     player.score = player.score || 0;
   });
+
+  // The question actually used is no longer pending, whether it came from the textarea or a picked suggestion.
+  room.suggestedQuestions = room.suggestedQuestions.filter((entry) => entry.text !== selectedQuestion);
 
   broadcastRoom(room);
 }
@@ -1090,7 +1152,7 @@ wss.on('connection', (socket, request) => {
           }
 
           sendRoomSession(socket, room, membership.role, membership.playerId, membership.playerName, membership.reconnectToken);
-          socket.send(JSON.stringify({ type: 'room-state', state: makeRoomState(room) }));
+          socket.send(JSON.stringify({ type: 'room-state', state: makeRoomState(room, membership.playerId) }));
           broadcastRoom(room);
           break;
         }
@@ -1107,10 +1169,11 @@ wss.on('connection', (socket, request) => {
             hostAvatar: message.avatar,
             guessTimeoutSeconds: message.guessTimeoutSeconds,
             addSelfAsPlayer: message.addSelfAsPlayer,
+            allowPlayerSuggestions: message.allowPlayerSuggestions,
           });
           attachSocketToRoom(roomData, socket, roomData.hostId);
           sendRoomSession(socket, roomData, 'host', roomData.hostId, roomData.hostName, roomData.hostReconnectToken);
-          socket.send(JSON.stringify({ type: 'room-state', state: makeRoomState(roomData) }));
+          socket.send(JSON.stringify({ type: 'room-state', state: makeRoomState(roomData, roomData.hostId) }));
           logger.event('room-created', { roomCode: roomData.code, language: roomData.language });
           break;
         }
@@ -1190,6 +1253,39 @@ wss.on('connection', (socket, request) => {
             return;
           }
           revealAnswer(room);
+          break;
+        }
+
+        case 'suggest-question': {
+          if (!canSuggestQuestion(room, socket.playerId)) {
+            return;
+          }
+          const player = findPlayerById(room, socket.playerId);
+          const suggestion = addSuggestedQuestion(room, socket.playerId, player.name, message.text);
+          if (!suggestion) {
+            socket.send(JSON.stringify({ type: 'error', message: 'Question must be between 8 and 220 characters.' }));
+            return;
+          }
+          logger.event('question-suggested', { roomCode: room.code, playerId: socket.playerId });
+          broadcastRoom(room);
+          break;
+        }
+
+        case 'delete-suggestion': {
+          if (!canDeleteSuggestion(room, message.suggestionId, socket.playerId)) {
+            return;
+          }
+          removeSuggestedQuestion(room, message.suggestionId);
+          broadcastRoom(room);
+          break;
+        }
+
+        case 'dismiss-suggestion': {
+          if (!canDismissSuggestion(room, socket.user?.id)) {
+            return;
+          }
+          removeSuggestedQuestion(room, message.suggestionId);
+          broadcastRoom(room);
           break;
         }
 
@@ -1373,6 +1469,12 @@ export {
   clearGuessCountdown,
   GUESS_TIMEOUT_SECONDS,
   GUESS_COUNTDOWN_MS,
+  addSuggestedQuestion,
+  removeSuggestedQuestion,
+  canSuggestQuestion,
+  canDeleteSuggestion,
+  canDismissSuggestion,
+  broadcastRoom,
 };
 
 // Graceful shutdown for testing

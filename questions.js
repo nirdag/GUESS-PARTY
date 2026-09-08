@@ -80,4 +80,4 @@ function createQuestionService({ now = () => Date.now() } = {}) {
   return { listQuestions, addQuestion, deleteQuestion };
 }
 
-export { createQuestionService };
+export { createQuestionService, minQuestionLength, maxQuestionLength };
