@@ -1531,6 +1531,7 @@ function renderLobby(): void {
   const hostQuestionIsValid = state.customQuestion.trim().length >= 8
   // In host-as-player rooms the game-start trigger belongs to the asker (always the host before the first round), not the host role itself.
   const isAsker = state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host'
+  const ruleKeyPrefix = state.role === 'host' && !state.hostIsPlayer ? 'host' : 'player'
 
   root.innerHTML = `
     <main class="shell">
@@ -1623,10 +1624,10 @@ function renderLobby(): void {
             ${state.allowPlayerSuggestions ? renderSuggestionsPanel() : ''}
 
             <div class="rules-list">
-              <div class="rule-item"><strong>1.</strong><span>${t('lobby.hostRule1')}</span></div>
-              <div class="rule-item"><strong>2.</strong><span>${t('lobby.hostRule2')}</span></div>
-              <div class="rule-item"><strong>3.</strong><span>${t('lobby.hostRule3')}</span></div>
-              <div class="rule-item"><strong>4.</strong><span>${t('lobby.hostRule4')}</span></div>
+              <div class="rule-item"><strong>1.</strong><span>${t(`lobby.${ruleKeyPrefix}Rule1`)}</span></div>
+              <div class="rule-item"><strong>2.</strong><span>${t(`lobby.${ruleKeyPrefix}Rule2`)}</span></div>
+              <div class="rule-item"><strong>3.</strong><span>${t(`lobby.${ruleKeyPrefix}Rule3`)}</span></div>
+              <div class="rule-item"><strong>4.</strong><span>${t(`lobby.${ruleKeyPrefix}Rule4`)}</span></div>
             </div>
           </section>
           `
