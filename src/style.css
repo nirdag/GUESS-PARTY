@@ -85,6 +85,16 @@ button {
   font-weight: 700;
 }
 
+.identity-auth-badge {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .connection-status {
   color: var(--secondary);
   font-size: 12px;
@@ -181,6 +191,33 @@ button {
   background: rgba(15, 21, 37, 0.7);
   color: white;
   padding: 11px 14px;
+}
+
+.my-gallery-panel {
+  margin-top: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.gallery-filter-group {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.pill-button {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  padding: 6px 14px;
+  font-size: 12px;
+}
+
+.pill-button.active {
+  background: var(--primary);
+  color: white;
+  border-color: var(--primary);
 }
 
 .guess-time-counter {

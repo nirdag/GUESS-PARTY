@@ -10,6 +10,7 @@ import { WebSocketServer } from 'ws';
 import { createAuthService } from './auth.js';
 import { isAdminEmail } from './admins.js';
 import { createQuestionService, minQuestionLength, maxQuestionLength } from './questions.js';
+import { createUserQuestionService } from './userQuestions.js';
 import { sendVerificationEmail } from './emailService.js';
 import { logger } from './logger.js';
 
@@ -51,6 +52,7 @@ const initialAccountStats = authService.getAccountStats();
 logger.metric('registered-accounts', initialAccountStats.totalAccounts);
 logger.metric('verified-accounts', initialAccountStats.verifiedAccounts);
 const questionService = createQuestionService();
+const userQuestionService = createUserQuestionService();
 
 process.on('uncaughtException', (error) => {
   logger.error('uncaught-exception', { error });
@@ -162,8 +164,8 @@ function canDeleteSuggestion(room, suggestionId, playerId) {
   return Boolean(existing && existing.playerId === playerId);
 }
 
-function canDismissSuggestion(room, hostAccountId) {
-  return Boolean(room && hostAccountId && room.hostAccountId === hostAccountId);
+function canDismissSuggestion(room, playerId) {
+  return Boolean(room && playerId && room.hostId === playerId);
 }
 
 // Only answer authors are eligible, excluding those revealed in an earlier round and the current asker.
@@ -281,7 +283,8 @@ function attachSocketToRoom(room, socket, playerId) {
 
 function reconnectRoom(room, socket, { role, reconnectToken }) {
   if (role === 'host') {
-    if (!socket.user || room.hostAccountId !== socket.user.id || room.hostReconnectToken !== reconnectToken) {
+    // Token-only, symmetric with player reconnect below - works for both guest and authenticated hosts.
+    if (!room.hostReconnectToken || room.hostReconnectToken !== reconnectToken) {
       return null;
     }
 
@@ -1060,6 +1063,16 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+function requireAuth(req, res, next) {
+  const user = requestUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Log in required.' });
+    return;
+  }
+  req.authUser = user;
+  next();
+}
+
 app.get('/questions', (req, res) => {
   res.json({ questions: questionService.listQuestions(normalizeLanguage(req.query.language)) });
 });
@@ -1081,6 +1094,30 @@ app.delete('/admin/questions/:id', requireAdmin, (req, res) => {
     return;
   }
   logger.event('admin-question-deleted', { id: req.params.id });
+  res.status(204).end();
+});
+
+app.get('/my-questions', requireAuth, (req, res) => {
+  res.json({ questions: userQuestionService.listUserQuestions(req.authUser.id, normalizeLanguage(req.query.language)) });
+});
+
+app.post('/my-questions', requireAuth, (req, res) => {
+  const result = userQuestionService.addUserQuestion(req.authUser.id, req.body?.language, req.body?.text);
+  if (result.error) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  logger.event('user-question-added', { userId: req.authUser.id, language: req.body?.language });
+  res.status(201).json({ question: result.question });
+});
+
+app.delete('/my-questions/:id', requireAuth, (req, res) => {
+  const deleted = userQuestionService.deleteUserQuestion(req.authUser.id, req.params.id);
+  if (!deleted) {
+    res.status(404).json({ error: 'Question not found.' });
+    return;
+  }
+  logger.event('user-question-deleted', { userId: req.authUser.id, id: req.params.id });
   res.status(204).end();
 });
 
@@ -1158,13 +1195,9 @@ wss.on('connection', (socket, request) => {
         }
 
         case 'create-room': {
-          if (!socket.user) {
-            socket.send(JSON.stringify({ type: 'error', code: 'AUTH_REQUIRED', message: 'Log in to create a room.' }));
-            return;
-          }
           const roomData = createRoom({
             hostName: message.name || 'Host',
-            hostAccountId: socket.user.id,
+            hostAccountId: socket.user?.id ?? null,
             language: message.language,
             hostAvatar: message.avatar,
             guessTimeoutSeconds: message.guessTimeoutSeconds,
@@ -1223,7 +1256,7 @@ wss.on('connection', (socket, request) => {
         }
 
         case 'close-room': {
-          if (!room || room.hostId !== socket.playerId || room.hostAccountId !== socket.user?.id) {
+          if (!room || room.hostId !== socket.playerId) {
             return;
           }
 
@@ -1233,11 +1266,11 @@ wss.on('connection', (socket, request) => {
         }
 
         case 'start-round': {
-          // In host-as-player rooms, the current asker starts the round, not necessarily the host account.
+          // In host-as-player rooms, the current asker starts the round, not necessarily the host.
           const canStartRound = room && (
             room.hostIsPlayer
               ? socket.playerId === room.askingPlayerId
-              : room.hostAccountId === socket.user?.id
+              : room.hostId === socket.playerId
           );
           if (!canStartRound) {
             return;
@@ -1249,7 +1282,7 @@ wss.on('connection', (socket, request) => {
         }
 
         case 'reveal-answer': {
-          if (!room || room.hostAccountId !== socket.user?.id) {
+          if (!room || room.hostId !== socket.playerId) {
             return;
           }
           revealAnswer(room);
@@ -1281,7 +1314,7 @@ wss.on('connection', (socket, request) => {
         }
 
         case 'dismiss-suggestion': {
-          if (!canDismissSuggestion(room, socket.user?.id)) {
+          if (!canDismissSuggestion(room, socket.playerId)) {
             return;
           }
           removeSuggestedQuestion(room, message.suggestionId);
@@ -1290,11 +1323,11 @@ wss.on('connection', (socket, request) => {
         }
 
         case 'lock-answers': {
-          // In host-as-player rooms, the current asker locks answers, not necessarily the host account.
+          // In host-as-player rooms, the current asker locks answers, not necessarily the host.
           const canLockAnswers = room && (
             room.hostIsPlayer
               ? socket.playerId === room.askingPlayerId
-              : room.hostAccountId === socket.user?.id
+              : room.hostId === socket.playerId
           );
           if (!canLockAnswers) {
             return;
@@ -1304,11 +1337,11 @@ wss.on('connection', (socket, request) => {
         }
 
         case 'calculate-score': {
-          // In host-as-player rooms, the current asker stops the timer, not necessarily the host account.
+          // In host-as-player rooms, the current asker stops the timer, not necessarily the host.
           const canCalculateScore = room && (
             room.hostIsPlayer
               ? socket.playerId === room.askingPlayerId
-              : room.hostAccountId === socket.user?.id
+              : room.hostId === socket.playerId
           );
           if (!canCalculateScore) {
             return;
@@ -1322,7 +1355,7 @@ wss.on('connection', (socket, request) => {
           const canAdvance = room && (
             room.hostIsPlayer
               ? socket.playerId === room.askingPlayerId
-              : room.hostAccountId === socket.user?.id
+              : room.hostId === socket.playerId
           );
           if (!canAdvance) {
             return;
@@ -1357,7 +1390,7 @@ wss.on('connection', (socket, request) => {
         }
 
         case 'next-round': {
-          if (!room || room.hostAccountId !== socket.user?.id) {
+          if (!room || room.hostId !== socket.playerId) {
             return;
           }
           startRound(room);
@@ -1365,7 +1398,7 @@ wss.on('connection', (socket, request) => {
         }
 
         case 'new-game': {
-          if (!room || room.hostAccountId !== socket.user?.id) {
+          if (!room || room.hostId !== socket.playerId) {
             return;
           }
           if (room.hostIsPlayer) {

@@ -168,6 +168,7 @@ function clearStoredRoomSession(): void {
 }
 
 const storedRoomSession = readStoredRoomSession()
+const postLoginScreenStorageKey = 'guess-party-post-login-screen'
 
 const state = {
   screen: 'welcome' as Screen,
@@ -213,6 +214,9 @@ const state = {
   adminQuestions: [] as GalleryQuestion[],
   showQuestionGallery: false,
   galleryQuestions: [] as GalleryQuestion[],
+  privateQuestions: [] as GalleryQuestion[],
+  galleryFilter: 'all' as 'all' | 'public' | 'private',
+  myGalleryError: '',
   showRoomSharingPanel: false,
   roomCodePrefilledFromUrl: false,
   finalMatchup: null as FinalMatchup | null,
@@ -726,6 +730,15 @@ function createRoomSession(name: string, language: LanguageCode, avatar: string,
 }
 
 async function openHostFlow(): Promise<void> {
+  await refreshAccountSession()
+  if (state.account) {
+    await fetchMyQuestions()
+  }
+  state.screen = 'host-setup'
+  renderApp()
+}
+
+async function refreshAccountSession(): Promise<void> {
   try {
     const response = await fetch(buildApiUrl('/auth/session'), { credentials: 'include' })
     const payload = await response.json()
@@ -733,13 +746,14 @@ async function openHostFlow(): Promise<void> {
   } catch {
     state.account = null
   }
+}
 
-  if (state.account?.emailVerified) {
-    state.screen = 'host-setup'
-    renderApp()
-    return
+function goToMembershipToUnlockGallery(): void {
+  try {
+    window.sessionStorage.setItem(postLoginScreenStorageKey, 'host-setup')
+  } catch {
+    // Login will still work without the return-screen redirect if storage is unavailable.
   }
-
   state.screen = 'membership'
   renderApp()
 }
@@ -923,6 +937,9 @@ function renderIdentityBanner(): string {
   const displayName = state.playerName || t('common.guest')
   const roleLabel = state.role === 'host' ? t('common.host') : t('common.player')
   const avatar = state.myAvatar || formatPlayerInitials(displayName)
+  const authBadge = state.role === 'host'
+    ? `<span class="identity-auth-badge" title="${state.account ? state.account.email : ''}">${state.account ? t('common.hostLoggedIn') : t('common.hostGuest')}</span>`
+    : ''
 
   return `
     <div class="identity-banner">
@@ -930,6 +947,7 @@ function renderIdentityBanner(): string {
       <span class="identity-label">${t('common.playingAs')}</span>
       <strong>${displayName}</strong>
       <span class="identity-role">${roleLabel}</span>
+      ${authBadge}
       <span class="connection-status" data-role="connection-status" role="status" aria-live="polite" hidden></span>
       ${state.role === 'host'
         ? `<button class="quit-button" type="button" data-role="close-room">${t('common.closeRoom')}</button>`
@@ -978,6 +996,10 @@ function renderWelcome(): void {
             <small>${t('welcome.adminLoginHint')}</small>
           </button>
         </div>
+
+        ${!state.account
+          ? `<button class="ghost-button" type="button" data-role="welcome-login-hint">${t('welcome.guestHostHint')}</button>`
+          : ''}
       </section>
     </main>
   `
@@ -986,6 +1008,10 @@ function renderWelcome(): void {
     state.customQuestion = ''
     state.selectedAvatar = AVATAR_OPTIONS[0]
     void openHostFlow()
+  })
+
+  root.querySelector('[data-role="welcome-login-hint"]')?.addEventListener('click', () => {
+    goToMembershipToUnlockGallery()
   })
 
   root.querySelector('[data-role="join-room"]')?.addEventListener('click', () => {
@@ -1013,6 +1039,10 @@ function renderHostSetup(): void {
         <h1>${t('hostSetup.title')}</h1>
         <p class="subtitle">${t('hostSetup.subtitle')}</p>
 
+        ${!state.account
+          ? `<button class="ghost-button" type="button" data-role="host-setup-login-hint">${t('hostSetup.guestHostHint')}</button>`
+          : ''}
+
         <form id="host-setup-form" class="membership-form">
           <label for="host-setup-name">${t('hostSetup.nameLabel')}</label>
           <input id="host-setup-name" type="text" placeholder="${t('hostSetup.namePlaceholder')}" value="${state.playerName}" required />
@@ -1039,6 +1069,36 @@ function renderHostSetup(): void {
           <small class="field-hint">${t('hostSetup.allowSuggestionsHint')}</small>
           <button class="primary-button" type="submit">${t('hostSetup.submit')}</button>
         </form>
+
+        ${state.account
+          ? `
+            <div class="my-gallery-panel">
+              <div class="section-head">
+                <h2>${t('myGallery.title')}</h2>
+              </div>
+              <form id="my-gallery-add-form" class="membership-form">
+                <label for="my-gallery-text">${t('myGallery.questionTextLabel')}</label>
+                <textarea id="my-gallery-text" rows="3" maxlength="220"></textarea>
+                <p class="membership-error" data-role="my-gallery-error" aria-live="polite">${state.myGalleryError}</p>
+                <button class="primary-button" type="submit">${t('myGallery.addButton')}</button>
+              </form>
+              <div class="result-list">
+                ${state.privateQuestions.length > 0
+                  ? state.privateQuestions
+                      .map(
+                        (question) => `
+                          <div class="result-row">
+                            <span>${question.text}</span>
+                            <button class="ghost-button" type="button" data-role="my-gallery-delete-question" data-question-id="${question.id}">${t('myGallery.deleteButton')}</button>
+                          </div>
+                        `,
+                      )
+                      .join('')
+                  : `<div class="result-row"><span>${t('myGallery.emptyState')}</span></div>`}
+              </div>
+            </div>
+            `
+          : ''}
 
         <div class="membership-actions">
           <button class="ghost-button" type="button" data-role="host-setup-back">${t('hostSetup.back')}</button>
@@ -1072,6 +1132,12 @@ function renderHostSetup(): void {
 
   root.querySelector('[data-role="guess-time-decrease"]')?.addEventListener('click', () => updateGuessTime(-5))
   root.querySelector('[data-role="guess-time-increase"]')?.addEventListener('click', () => updateGuessTime(5))
+
+  root.querySelector('[data-role="host-setup-login-hint"]')?.addEventListener('click', () => {
+    goToMembershipToUnlockGallery()
+  })
+
+  wireMyGalleryManagement()
 
   // Mutually exclusive: a rotating asker already writes their own question, so suggestions have no host to hand them to.
   const addSelfCheckbox = root.querySelector<HTMLInputElement>('#host-setup-add-self')
@@ -1191,6 +1257,11 @@ function renderMembership(): void {
   })
 
   root.querySelector('[data-role="membership-back"]')?.addEventListener('click', () => {
+    try {
+      window.sessionStorage.removeItem(postLoginScreenStorageKey)
+    } catch {
+      // Nothing else is required when browser storage is unavailable.
+    }
     state.screen = 'welcome'
     renderApp()
   })
@@ -1245,6 +1316,89 @@ async function fetchAdminQuestions(): Promise<void> {
   }
 }
 
+async function fetchMyQuestions(): Promise<void> {
+  try {
+    const response = await fetch(buildApiUrl(`/my-questions?language=${state.language}`), { credentials: 'include' })
+    const payload = await response.json()
+    state.privateQuestions = payload.questions ?? []
+  } catch {
+    state.privateQuestions = []
+  }
+}
+
+async function saveQuestionToMyGallery(text: string): Promise<void> {
+  const trimmed = text.trim()
+  if (trimmed.length < 8 || trimmed.length > 220) {
+    window.alert(t('prompts.questionTooShort'))
+    return
+  }
+
+  try {
+    const response = await fetch(buildApiUrl('/my-questions'), {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ language: state.language, text: trimmed }),
+    })
+    const payload = await response.json()
+    if (!response.ok) {
+      window.alert(payload.error || t('prompts.questionSaveFailed'))
+      return
+    }
+
+    await fetchMyQuestions()
+    window.alert(t('prompts.questionSavedToGallery'))
+  } catch {
+    window.alert(t('prompts.questionSaveFailed'))
+  }
+}
+
+function wireMyGalleryManagement(): void {
+  if (!state.account) {
+    return
+  }
+
+  const addForm = root.querySelector<HTMLFormElement>('#my-gallery-add-form')
+  const errorElement = root.querySelector<HTMLElement>('[data-role="my-gallery-error"]')
+
+  addForm?.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const text = root.querySelector<HTMLTextAreaElement>('#my-gallery-text')?.value.trim() ?? ''
+
+    state.myGalleryError = ''
+    try {
+      const response = await fetch(buildApiUrl('/my-questions'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ language: state.language, text }),
+      })
+      const payload = await response.json()
+      if (!response.ok) {
+        state.myGalleryError = payload.error || t('myGallery.addButton')
+        renderApp()
+        return
+      }
+
+      await fetchMyQuestions()
+      renderApp()
+    } catch {
+      if (errorElement) {
+        errorElement.textContent = t('membership.serviceUnavailable')
+      }
+    }
+  })
+
+  root.querySelectorAll<HTMLButtonElement>('[data-role="my-gallery-delete-question"]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const questionId = button.dataset.questionId ?? ''
+      await fetch(buildApiUrl(`/my-questions/${questionId}`), { method: 'DELETE', credentials: 'include' })
+      await fetchMyQuestions()
+      renderApp()
+    })
+  })
+}
+
 async function openQuestionGallery(): Promise<void> {
   try {
     const response = await fetch(buildApiUrl(`/questions?language=${state.language}`))
@@ -1254,8 +1408,83 @@ async function openQuestionGallery(): Promise<void> {
     state.galleryQuestions = []
   }
 
+  if (state.account) {
+    await fetchMyQuestions()
+  }
+
   state.showQuestionGallery = true
   renderApp()
+}
+
+function getFilteredGalleryEntries(): Array<{ id: string; text: string; isPrivate: boolean }> {
+  const publicEntries = state.galleryQuestions.map((question) => ({ ...question, isPrivate: false }))
+  const privateEntries = state.privateQuestions.map((question) => ({ ...question, isPrivate: true }))
+  const combined = [...publicEntries, ...privateEntries]
+
+  if (state.galleryFilter === 'public') {
+    return combined.filter((entry) => !entry.isPrivate)
+  }
+  if (state.galleryFilter === 'private') {
+    return combined.filter((entry) => entry.isPrivate)
+  }
+  return combined
+}
+
+function renderGalleryPanel(): string {
+  const entries = getFilteredGalleryEntries()
+  const showFilter = state.privateQuestions.length > 0
+
+  return `
+    <div class="result-list">
+      <div class="section-head">
+        <h2>${t('lobby.galleryTitle')}</h2>
+        <button class="ghost-button" type="button" data-role="close-gallery">${t('lobby.galleryClose')}</button>
+      </div>
+      ${showFilter
+        ? `
+          <div class="gallery-filter-group" role="group">
+            <button type="button" class="pill-button ${state.galleryFilter === 'all' ? 'active' : ''}" data-role="gallery-filter" data-filter="all">${t('lobby.galleryFilterAll')}</button>
+            <button type="button" class="pill-button ${state.galleryFilter === 'public' ? 'active' : ''}" data-role="gallery-filter" data-filter="public">${t('lobby.galleryFilterPublic')}</button>
+            <button type="button" class="pill-button ${state.galleryFilter === 'private' ? 'active' : ''}" data-role="gallery-filter" data-filter="private">${t('lobby.galleryFilterPrivate')}</button>
+          </div>
+          `
+        : ''}
+      ${entries.length > 0
+        ? entries
+            .map(
+              (question) => `
+                <button type="button" class="result-row" data-role="select-gallery-question" data-question-text="${question.text.replace(/"/g, '&quot;')}">
+                  <span>${question.text}${question.isPrivate ? ` <span class="card-tag">${t('myGallery.privateBadge')}</span>` : ''}</span>
+                  <strong>${t('lobby.gallerySelect')}</strong>
+                </button>
+              `,
+            )
+            .join('')
+        : `<div class="result-row"><span>${t('lobby.galleryEmpty')}</span></div>`}
+    </div>
+  `
+}
+
+function wireGalleryPanel(onSelect: (text: string) => void): void {
+  root.querySelector('[data-role="close-gallery"]')?.addEventListener('click', () => {
+    state.showQuestionGallery = false
+    renderApp()
+  })
+
+  root.querySelectorAll<HTMLButtonElement>('[data-role="gallery-filter"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.galleryFilter = (button.dataset.filter as 'all' | 'public' | 'private') ?? 'all'
+      renderApp()
+    })
+  })
+
+  root.querySelectorAll<HTMLButtonElement>('[data-role="select-gallery-question"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      onSelect(button.dataset.questionText ?? '')
+      state.showQuestionGallery = false
+      renderApp()
+    })
+  })
 }
 
 function renderAdminLogin(): void {
@@ -1595,31 +1824,11 @@ function renderLobby(): void {
                 <button class="secondary-button" type="submit">${t('lobby.saveQuestion')}</button>
                 <button class="ghost-button" type="button" data-role="clear-question">${t('lobby.clear')}</button>
                 <button class="ghost-button" type="button" data-role="browse-gallery">${t('lobby.browseGallery')}</button>
+                ${state.account ? `<button class="ghost-button" type="button" data-role="save-to-gallery">${t('lobby.saveToGallery')}</button>` : ''}
               </div>
             </form>
 
-            ${state.showQuestionGallery
-              ? `
-                <div class="result-list">
-                  <div class="section-head">
-                    <h2>${t('lobby.galleryTitle')}</h2>
-                    <button class="ghost-button" type="button" data-role="close-gallery">${t('lobby.galleryClose')}</button>
-                  </div>
-                  ${state.galleryQuestions.length > 0
-                    ? state.galleryQuestions
-                        .map(
-                          (question) => `
-                            <button type="button" class="result-row" data-role="select-gallery-question" data-question-text="${question.text.replace(/"/g, '&quot;')}">
-                              <span>${question.text}</span>
-                              <strong>${t('lobby.gallerySelect')}</strong>
-                            </button>
-                          `,
-                        )
-                        .join('')
-                    : `<div class="result-row"><span>${t('lobby.galleryEmpty')}</span></div>`}
-                </div>
-                `
-              : ''}
+            ${state.showQuestionGallery ? renderGalleryPanel() : ''}
 
             ${state.allowPlayerSuggestions ? renderSuggestionsPanel() : ''}
 
@@ -1722,17 +1931,12 @@ function renderLobby(): void {
     void openQuestionGallery()
   })
 
-  root.querySelector('[data-role="close-gallery"]')?.addEventListener('click', () => {
-    state.showQuestionGallery = false
-    renderApp()
+  root.querySelector('[data-role="save-to-gallery"]')?.addEventListener('click', () => {
+    void saveQuestionToMyGallery(root.querySelector<HTMLTextAreaElement>('#host-question')?.value ?? '')
   })
 
-  root.querySelectorAll<HTMLButtonElement>('[data-role="select-gallery-question"]').forEach((button) => {
-    button.addEventListener('click', () => {
-      state.customQuestion = button.dataset.questionText ?? ''
-      state.showQuestionGallery = false
-      renderApp()
-    })
+  wireGalleryPanel((text) => {
+    state.customQuestion = text
   })
 
   wireSuggestionPanels()
@@ -1788,31 +1992,11 @@ function renderAskQuestion(): void {
           <div class="host-question-actions">
             <button class="primary-button" type="submit">${t('askQuestion.submit')}</button>
             <button class="ghost-button" type="button" data-role="browse-gallery">${t('lobby.browseGallery')}</button>
+            ${state.account ? `<button class="ghost-button" type="button" data-role="save-to-gallery">${t('lobby.saveToGallery')}</button>` : ''}
           </div>
         </form>
 
-        ${state.showQuestionGallery
-          ? `
-            <div class="result-list">
-              <div class="section-head">
-                <h2>${t('lobby.galleryTitle')}</h2>
-                <button class="ghost-button" type="button" data-role="close-gallery">${t('lobby.galleryClose')}</button>
-              </div>
-              ${state.galleryQuestions.length > 0
-                ? state.galleryQuestions
-                    .map(
-                      (question) => `
-                        <button type="button" class="result-row" data-role="select-gallery-question" data-question-text="${question.text.replace(/"/g, '&quot;')}">
-                          <span>${question.text}</span>
-                          <strong>${t('lobby.gallerySelect')}</strong>
-                        </button>
-                      `,
-                    )
-                    .join('')
-                : `<div class="result-row"><span>${t('lobby.galleryEmpty')}</span></div>`}
-            </div>
-            `
-          : ''}
+        ${state.showQuestionGallery ? renderGalleryPanel() : ''}
       </section>
     </main>
   `
@@ -1829,17 +2013,12 @@ function renderAskQuestion(): void {
     void openQuestionGallery()
   })
 
-  root.querySelector('[data-role="close-gallery"]')?.addEventListener('click', () => {
-    state.showQuestionGallery = false
-    renderApp()
+  root.querySelector('[data-role="save-to-gallery"]')?.addEventListener('click', () => {
+    void saveQuestionToMyGallery(root.querySelector<HTMLTextAreaElement>('#ask-question-input')?.value ?? '')
   })
 
-  root.querySelectorAll<HTMLButtonElement>('[data-role="select-gallery-question"]').forEach((button) => {
-    button.addEventListener('click', () => {
-      state.askQuestionDraft = button.dataset.questionText ?? ''
-      state.showQuestionGallery = false
-      renderApp()
-    })
+  wireGalleryPanel((text) => {
+    state.askQuestionDraft = text
   })
 }
 
@@ -2381,7 +2560,7 @@ function renderGameEnd(): void {
       <section class="panel summary-panel">
         <p class="eyebrow">${t('gameEnd.complete')}</p>
         <h1>${t('gameEnd.finished')}</h1>
-        <p class="subtitle">The host can ask another question to continue playing.</p>
+        <p class="subtitle">${state.role === 'host' ? 'You can ask another question to continue playing.' : 'The host can ask another question to continue playing.'}</p>
         <div class="section-head">
           <h2>${t('gameEnd.finalScores')}</h2>
         </div>
@@ -2760,8 +2939,36 @@ async function initializeDemoMode(): Promise<void> {
   }
 }
 
+async function restorePostLoginScreenIfPending(): Promise<void> {
+  let pendingScreen: string | null = null
+  try {
+    pendingScreen = window.sessionStorage.getItem(postLoginScreenStorageKey)
+  } catch {
+    return
+  }
+
+  if (pendingScreen !== 'host-setup') {
+    return
+  }
+
+  try {
+    window.sessionStorage.removeItem(postLoginScreenStorageKey)
+  } catch {
+    // Nothing else is required when browser storage is unavailable.
+  }
+
+  await refreshAccountSession()
+  if (!state.account) {
+    return
+  }
+
+  await fetchMyQuestions()
+  state.screen = 'host-setup'
+}
+
 consumeEmailVerificationLink()
   .then(() => initializeDemoMode())
+  .then(() => restorePostLoginScreenIfPending())
   .finally(() => {
     initializeRoomLinkIfProvided()
     renderApp()

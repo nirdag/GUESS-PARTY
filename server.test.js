@@ -492,6 +492,14 @@ describe('HIGH: Guess Round Timeout', () => {
     expect(createdRoom.guessTimeoutSeconds).toBe(20);
   });
 
+  it('createRoom allows an anonymous (guest) host with no hostAccountId', () => {
+    const createdRoom = createRoom({ hostName: 'Guest Host' });
+
+    expect(createdRoom.hostAccountId).toBeNull();
+    expect(createdRoom.hostId).toBeTruthy();
+    expect(createdRoom.hostReconnectToken).toBeTruthy();
+  });
+
   it('armGuessTimeout uses the room guess timeout', () => {
     room.guessTimeoutSeconds = 25;
     room.phase = 'guessing';
@@ -1074,7 +1082,7 @@ describe('CRITICAL: Room Reconnection', () => {
     expect(room.players[0].score).toBe(120);
   });
 
-  it('restores a host only when their authenticated account and token match', () => {
+  it('restores a host using the reconnect token alone, regardless of authentication', () => {
     const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account' });
     room.hostDisconnectedAt = Date.now();
     const socket = createTestSocket({ id: 'host-account' });
@@ -1084,6 +1092,28 @@ describe('CRITICAL: Room Reconnection', () => {
     expect(membership).toMatchObject({ role: 'host', playerId: room.hostId });
     expect(room.hostDisconnectedAt).toBeNull();
     expect(socket.playerId).toBe(room.hostId);
+  });
+
+  it('restores an anonymous (guest) host via the reconnect token, with no socket.user at all', () => {
+    const room = createRoom({ hostName: 'Host' });
+    room.hostDisconnectedAt = Date.now();
+    const socket = createTestSocket();
+
+    const membership = reconnectRoom(room, socket, { role: 'host', reconnectToken: room.hostReconnectToken });
+
+    expect(membership).toMatchObject({ role: 'host', playerId: room.hostId });
+    expect(room.hostDisconnectedAt).toBeNull();
+    expect(socket.playerId).toBe(room.hostId);
+  });
+
+  it('rejects a host reconnect attempt with the wrong token', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account' });
+    room.hostDisconnectedAt = Date.now();
+    const socket = createTestSocket();
+
+    const membership = reconnectRoom(room, socket, { role: 'host', reconnectToken: 'wrong-token' });
+
+    expect(membership).toBeNull();
   });
 
   it('rejects a player reconnect attempt with an invalid token', () => {
@@ -1629,12 +1659,12 @@ describe('HIGH: Player-suggested questions', () => {
       expect(canDeleteSuggestion(room, suggestion.id, alice.id)).toBe(true);
     });
 
-    it('canDismissSuggestion only allows the room\'s own host account', () => {
+    it('canDismissSuggestion only allows the room\'s own host session', () => {
       const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', allowPlayerSuggestions: true });
 
-      expect(canDismissSuggestion(room, 'some-other-account')).toBe(false);
+      expect(canDismissSuggestion(room, 'some-other-player-id')).toBe(false);
       expect(canDismissSuggestion(room, null)).toBe(false);
-      expect(canDismissSuggestion(room, 'host-account')).toBe(true);
+      expect(canDismissSuggestion(room, room.hostId)).toBe(true);
     });
   });
 });
