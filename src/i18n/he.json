@@ -10,6 +10,8 @@
   "common.quit": "עזוב",
   "common.closeRoom": "סגור חדר",
   "common.loggedInAs": "מחובר בתור",
+  "common.logout": "התנתק",
+  "common.logoutFailed": "לא ניתן להתנתק. נסה שוב.",
 
   "welcome.eyebrow": "מסיבת ניחושים",
   "welcome.title": "מי כתב את התשובה?",

@@ -965,8 +965,27 @@ function appendAccountBadge(): void {
     <div class="account-badge">
       <span class="account-badge-label">${t('common.loggedInAs')}</span>
       <strong>${state.account.email}</strong>
+      <button class="account-logout" type="button" data-role="logout">${t('common.logout')}</button>
     </div>
   `)
+
+  root.querySelector<HTMLButtonElement>('[data-role="logout"]')?.addEventListener('click', async () => {
+    try {
+      const response = await fetch(buildApiUrl('/auth/logout'), {
+        method: 'POST',
+        credentials: 'include',
+      })
+
+      if (!response.ok) {
+        throw new Error('Logout failed')
+      }
+
+      state.account = null
+      renderApp()
+    } catch {
+      window.alert(t('common.logoutFailed'))
+    }
+  })
 }
 
 function renderWelcome(): void {
@@ -2969,6 +2988,7 @@ async function restorePostLoginScreenIfPending(): Promise<void> {
 consumeEmailVerificationLink()
   .then(() => initializeDemoMode())
   .then(() => restorePostLoginScreenIfPending())
+  .then(() => refreshAccountSession())
   .finally(() => {
     initializeRoomLinkIfProvided()
     renderApp()

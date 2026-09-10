@@ -10,6 +10,8 @@
   "common.quit": "Quit",
   "common.closeRoom": "Close room",
   "common.loggedInAs": "Logged in as",
+  "common.logout": "Log out",
+  "common.logoutFailed": "Unable to log out. Please try again.",
 
   "welcome.eyebrow": "Guess Party",
   "welcome.title": "Who wrote the answer?",
