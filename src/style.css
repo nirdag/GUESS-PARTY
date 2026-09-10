@@ -113,9 +113,9 @@ button {
 }
 
 .account-badge {
-  position: fixed;
-  top: 14px;
-  inset-inline-end: 14px;
+  justify-self: end;
+  width: fit-content;
+  max-width: 100%;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -125,7 +125,7 @@ button {
   border-radius: 999px;
   box-shadow: 0 6px 18px var(--shadow);
   font-size: 12px;
-  z-index: 20;
+  margin-top: -4px;
 }
 
 .account-badge .account-badge-label {
@@ -591,6 +591,7 @@ h1 {
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid var(--border);
   border-radius: 12px;
+  color: var(--muted);
 }
 
 .mini-card {
@@ -1086,6 +1087,12 @@ h1 {
   .shell {
     width: min(100% - 16px, 980px);
     padding-top: 16px;
+  }
+
+  .account-badge {
+    justify-self: stretch;
+    flex-wrap: wrap;
+    border-radius: 12px;
   }
 
   .panel {

@@ -961,7 +961,7 @@ function appendAccountBadge(): void {
     return
   }
 
-  root.insertAdjacentHTML('beforeend', `
+  root.querySelector('.shell')?.insertAdjacentHTML('beforeend', `
     <div class="account-badge">
       <span class="account-badge-label">${t('common.loggedInAs')}</span>
       <strong>${state.account.email}</strong>
