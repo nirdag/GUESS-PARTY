@@ -41,11 +41,13 @@ async function createClient(browser: Browser, name: string): Promise<Client> {
 }
 
 // Number of guess rounds varies with player count, so loop until the game-end screen appears.
-async function playRoundToGameEnd(host: Client): Promise<void> {
+async function playRoundToGameEnd(host: Client, players: Client[]): Promise<void> {
   while (!(await host.page.locator('[data-role="new-game"]').isVisible())) {
     await host.page.locator('[data-role="calculate-score"]').click()
-    await expect(host.page.locator('[data-role="next-round"]')).toBeVisible()
-    await host.page.locator('[data-role="next-round"]').click()
+    await expect(host.page.locator('[data-role="confirm-next-round"]')).toBeVisible()
+    for (const client of [host, ...players]) {
+      await client.page.locator('[data-role="confirm-next-round"]').click()
+    }
   }
 }
 
@@ -137,7 +139,7 @@ test('players can suggest questions privately and the host can use, dismiss, wit
 
     await expect(host.page.locator('[data-role="lock-answers"]')).toBeEnabled()
     await host.page.locator('[data-role="lock-answers"]').click()
-    await playRoundToGameEnd(host)
+    await playRoundToGameEnd(host, [alice, bob, carol])
 
     await host.page.locator('[data-role="new-game"]').click()
     await expect(host.page.locator('#host-question')).toBeVisible()

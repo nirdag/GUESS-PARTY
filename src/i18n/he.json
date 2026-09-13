@@ -192,6 +192,7 @@
   "hostManaging.liveLeaderboard": "טבלת מובילים חיה",
 
   "playerAnswering.thanksSubmitted": "תודה שהגשת את תשובתך.",
+  "playerAnswering.questionBy": "שאלה מאת {name}: {question}",
   "playerAnswering.waitingForOthers": "ממתין ששאר השחקנים יגישו את תשובותיהם...",
   "playerAnswering.waitingForPlayers": "ממתין ל-{players} שיגישו את תשובתם.",
   "playerAnswering.allAnswersReady": "הכל מוכן. ממתינים למארח שיתחיל את המשחק.",
@@ -250,6 +251,12 @@
   "roundEnd.missedIt": "😅 פספסת הפעם",
   "roundEnd.nextRound": "הסבב הבא",
   "roundEnd.goToFinalBoard": "עבור לטבלת הניקוד הסופית",
+  "roundEnd.confirmNextRound": "אישור \u2014 הסבב הבא",
+  "roundEnd.confirmGoToFinalBoard": "אישור \u2014 מעבר לטבלת הניקוד הסופית",
+  "roundEnd.waitingForConfirmations": "ממתינים לאישור המשך מ-{players}",
+  "roundEnd.allConfirmed": "כולם אישרו \u2014 ממשיכים\u2026",
+  "roundEnd.youConfirmed": "אישרת. ממתינים לשאר השחקנים\u2026",
+  "roundEnd.forceAdvance": "דלג על ההמתנה (מנחה)",
 
   "resultOverlay.greatGuess": "ניחוש מעולה!",
   "resultOverlay.youWereCorrect": "ניחשת נכון!",

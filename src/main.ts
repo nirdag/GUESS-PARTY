@@ -46,6 +46,7 @@ type Player = {
   score: number
   avatar: string
   ready?: boolean
+  connected?: boolean
   poolQuestionCount?: number
 }
 
@@ -79,6 +80,7 @@ type RoomState = {
   phase: 'lobby' | 'asking' | 'answer-collection' | 'guessing' | 'round-end' | 'game-end'
   answerRoundNumber: number
   question: string
+  questionAuthorName: string | null
   selectedAnswer: string
   answerAuthorId: string | null
   activeGuesserIndex: number
@@ -87,6 +89,8 @@ type RoomState = {
   guesses: GuessRecord[]
   roundResults: RoundResult[]
   hostId: string | null
+  hostName?: string
+  hostAvatar?: string
   timeLeft: number
   language: LanguageCode
   guessTimeoutSeconds: number
@@ -108,6 +112,7 @@ type RoomState = {
   currentPoolQuestionIndex?: number
   allPlayersReady?: boolean
   canStartGame?: boolean
+  roundEndConfirmedIds?: string[]
 }
 
 const app = document.querySelector<HTMLDivElement>('#app')
@@ -196,8 +201,13 @@ const state = {
   playerName: storedRoomSession?.playerName ?? '',
   currentPlayerId: storedRoomSession?.playerId ?? '',
   players: [] as Player[],
+  hostId: '' as string,
+  hostName: '' as string,
+  hostAvatar: '' as string,
+  roundEndConfirmedIds: [] as string[],
   answerRoundNumber: 0,
   question: '',
+  questionAuthorName: null as string | null,
   selectedAnswer: '',
   answerAuthorId: null as string | null,
   activeGuesserIndex: 0,
@@ -548,8 +558,13 @@ function applyRoomState(serverState: Partial<RoomState>): void {
 
   state.roomCode = serverState.code || state.roomCode
   state.players = serverState.players ?? state.players
+  state.hostId = serverState.hostId ?? state.hostId
+  state.hostName = serverState.hostName ?? state.hostName
+  state.hostAvatar = serverState.hostAvatar ?? state.hostAvatar
+  state.roundEndConfirmedIds = serverState.roundEndConfirmedIds ?? []
   state.answerRoundNumber = serverState.answerRoundNumber ?? state.answerRoundNumber
   state.question = serverState.question ?? state.question
+  state.questionAuthorName = serverState.questionAuthorName ?? null
   state.selectedAnswer = serverState.selectedAnswer ?? state.selectedAnswer
   state.answerAuthorId = serverState.answerAuthorId ?? state.answerAuthorId
   state.activeGuesserIndex = serverState.activeGuesserIndex ?? state.activeGuesserIndex
@@ -980,12 +995,20 @@ function calculateScores(): void {
   sendSocketMessage('calculate-score')
 }
 
-function advanceAnswer(): void {
+function confirmNextRound(): void {
   if (!state.roomCode) {
     return
   }
 
-  sendSocketMessage('advance-answer')
+  sendSocketMessage('confirm-next-round')
+}
+
+function forceAdvanceRound(): void {
+  if (!state.roomCode) {
+    return
+  }
+
+  sendSocketMessage('force-advance-round')
 }
 
 function requestNewGame(): void {
@@ -2012,7 +2035,7 @@ function renderLobby(): void {
           <strong>${state.roomCode}</strong>
           ${state.role === 'host' || (!state.questionPoolMode && isAsker)
             ? `
-              <button class="primary-button" type="button" data-role="start-round" ${canStartRound ? '' : 'disabled'}>${t('lobby.startRound')}</button>
+              <button class="primary-button start-round-button" type="button" data-role="start-round" ${canStartRound ? '' : 'disabled'}>${t('lobby.startRound')}</button>
               ${state.questionPoolMode
                 ? (state.poolQuestionCount < 1
                     ? `<small class="field-hint" style="color: #f87171;">${t('lobby.needAtLeastOneQuestion')}</small>`
@@ -2021,7 +2044,7 @@ function renderLobby(): void {
                         : `<small class="field-hint" style="color: #4ade80;">${t('lobby.readyToStart')}</small>`))
                 : ''}
             `
-            : `<div class="chip">${state.questionPoolMode ? (state.allPlayersReady ? t('lobby.waitingForHost') : t('lobby.waitingForPlayersReady', { ready: state.players.filter((p) => p.ready).length, total: state.players.length })) : t('lobby.waitingForHost')}</div>`}
+            : `<div class="chip waiting-for-host">${state.questionPoolMode ? (state.allPlayersReady ? t('lobby.waitingForHost') : t('lobby.waitingForPlayersReady', { ready: state.players.filter((p) => p.ready).length, total: state.players.length })) : t('lobby.waitingForHost')}</div>`}
         </div>
 
         ${state.role === 'host'
@@ -2476,6 +2499,9 @@ function renderHostManaging(): void {
 
 function renderPlayerAnswering(): void {
   const alreadySubmitted = state.answers.some((entry) => entry.playerId === state.currentPlayerId)
+  const displayedQuestion = state.questionPoolMode && state.questionAuthorName
+    ? t('playerAnswering.questionBy', { name: state.questionAuthorName, question: state.question })
+    : state.question
   // In host-as-player rooms without questionPoolMode, the current asker controls the round. In questionPoolMode, host controls.
   const canControlRound = state.questionPoolMode ? state.role === 'host' : (state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host')
 
@@ -2500,7 +2526,7 @@ function renderPlayerAnswering(): void {
       ${renderIdentityBanner()}
       <section class="panel player-answer-panel">
         <p class="eyebrow">${t('hostManaging.round', { number: state.answerRoundNumber })}</p>
-        <h1>${state.question}</h1>
+        <h1>${displayedQuestion}</h1>
         ${renderQuestionAskerTag()}
 
         ${alreadySubmitted
@@ -2735,7 +2761,22 @@ function renderRoundEnd(): void {
     : myResult
       ? myResult.correct ? 'success' : 'fail'
       : isEligibleToGuess ? 'no-guess' : null
-  const canAdvanceRound = state.questionPoolMode ? state.role === 'host' : (state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host')
+
+  // Confirmers required to advance: host + every currently-connected player, deduped (host may already be a player).
+  const confirmerMap = new Map<string, Player>()
+  confirmerMap.set(state.hostId, { id: state.hostId, name: state.hostName || 'Host', score: 0, avatar: state.hostAvatar })
+  state.players.forEach((player) => {
+    if (player.connected !== false) {
+      confirmerMap.set(player.id, player)
+    }
+  })
+  const pendingConfirmers = [...confirmerMap.values()].filter((confirmer) => !state.roundEndConfirmedIds.includes(confirmer.id))
+  const hasIConfirmed = state.roundEndConfirmedIds.includes(state.currentPlayerId)
+  const isLastRound = state.answerRoundNumber >= state.answers.length
+  const confirmLabel = isLastRound ? t('roundEnd.confirmGoToFinalBoard') : t('roundEnd.confirmNextRound')
+  const waitingMessage = pendingConfirmers.length > 0
+    ? t('roundEnd.waitingForConfirmations', { players: pendingConfirmers.map((confirmer) => `${formatPlayerAvatar(confirmer)} ${confirmer.name}`).join(', ') })
+    : t('roundEnd.allConfirmed')
 
   root.innerHTML = `
     <main class="shell">
@@ -2822,7 +2863,17 @@ function renderRoundEnd(): void {
           return `<div class="mini-card"><span>${myResult.correct ? t('roundEnd.earnedMore') : t('roundEnd.missedIt')}</span></div>`
         })()}
 
-        ${canAdvanceRound ? `<button class="primary-button next-round" type="button" data-role="next-round">${state.answerRoundNumber >= state.answers.length ? t('roundEnd.goToFinalBoard') : t('roundEnd.nextRound')}</button>` : ''}
+        <div class="mini-card round-end-confirm">
+          <span>${waitingMessage}</span>
+        </div>
+
+        ${hasIConfirmed
+          ? `<div class="mini-card"><span>${t('roundEnd.youConfirmed')}</span></div>`
+          : `<button class="primary-button next-round" type="button" data-role="confirm-next-round">${confirmLabel}</button>`}
+
+        ${state.role === 'host'
+          ? `<button class="secondary-button" type="button" data-role="force-advance-round">${t('roundEnd.forceAdvance')}</button>`
+          : ''}
       </section>
 
       ${state.allowPlayerSuggestions && state.role === 'player' ? renderSuggestQuestionPanel() : ''}
@@ -2834,8 +2885,12 @@ function renderRoundEnd(): void {
     playCelebrationSound(myResult.correct)
   }
 
-  root.querySelector<HTMLButtonElement>('[data-role="next-round"]')?.addEventListener('click', () => {
-    advanceAnswer()
+  root.querySelector<HTMLButtonElement>('[data-role="confirm-next-round"]')?.addEventListener('click', () => {
+    confirmNextRound()
+  })
+
+  root.querySelector<HTMLButtonElement>('[data-role="force-advance-round"]')?.addEventListener('click', () => {
+    forceAdvanceRound()
   })
 
   wireSuggestionPanels()

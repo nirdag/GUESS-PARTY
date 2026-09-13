@@ -45,6 +45,12 @@ function addScore(scores: Map<string, number>, player: Client, points: number): 
   scores.set(player.name, (scores.get(player.name) ?? 0) + points)
 }
 
+async function confirmNextRoundForAll(host: Client, players: Client[]): Promise<void> {
+  for (const client of [host, ...players]) {
+    await client.page.locator('[data-role="confirm-next-round"]').click()
+  }
+}
+
 async function submitCorrectNormalGuesses(players: Client[], answers: Map<string, string>, scores: Map<string, number>): Promise<void> {
   const answerText = await players[0].page.locator('.answer-reveal strong').innerText()
   const answerAuthor = [...answers].find(([, answer]) => answer === answerText)?.[0]
@@ -80,17 +86,17 @@ async function completeQuestion(host: Client, players: Client[], questionNumber:
       await submitCorrectNormalGuesses(players, answers, scores)
     }
     await host.page.locator('[data-role="calculate-score"]').click()
-    await expect(host.page.locator('[data-role="next-round"]')).toBeVisible()
+    await expect(host.page.locator('[data-role="confirm-next-round"]')).toBeVisible()
     await expect(host.page.locator('.rounds-left')).toHaveText(`${3 - roundNumber} rounds left to play this question`)
     await checkpoint(host, `question-${questionNumber}-round-${roundNumber}-complete`)
-    await host.page.locator('[data-role="next-round"]').click()
+    await confirmNextRoundForAll(host, players)
   }
 
   await host.page.locator('[data-role="calculate-score"]').click()
-  await expect(host.page.locator('[data-role="next-round"]')).toBeVisible()
+  await expect(host.page.locator('[data-role="confirm-next-round"]')).toBeVisible()
   await expect(host.page.locator('.rounds-left')).toHaveText('0 rounds left to play this question')
   await checkpoint(host, `question-${questionNumber}-round-3-complete`)
-  await host.page.locator('[data-role="next-round"]').click()
+  await confirmNextRoundForAll(host, players)
   await expect(host.page.locator('[data-role="new-game"]')).toBeVisible()
   await checkpoint(host, `question-${questionNumber}-game-complete`)
 }

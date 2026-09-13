@@ -143,6 +143,9 @@ test('pre-game question pool gathering, host moderation, player ready confirmati
     await expect(alice.page.locator('#player-answer')).toBeVisible()
     await expect(bob.page.locator('#player-answer')).toBeVisible()
     await expect(carol.page.locator('#player-answer')).toBeVisible()
+    await expect(alice.page.locator('.player-answer-panel h1')).toHaveText(/Question by (Alice|Bob): /)
+    await expect(bob.page.locator('.player-answer-panel h1')).toHaveText(/Question by (Alice|Bob): /)
+    await expect(carol.page.locator('.player-answer-panel h1')).toHaveText(/Question by (Alice|Bob): /)
 
     await alice.page.locator('#player-answer').fill('Alice answer for Q1')
     await alice.page.locator('[data-role="submit-answer"]').click()
@@ -161,8 +164,10 @@ test('pre-game question pool gathering, host moderation, player ready confirmati
       if (await host.page.locator('[data-role="calculate-score"]').isVisible()) {
         await host.page.locator('[data-role="calculate-score"]').click()
       }
-      if (await host.page.locator('[data-role="next-round"]').isVisible()) {
-        await host.page.locator('[data-role="next-round"]').click()
+      if (await host.page.locator('[data-role="confirm-next-round"]').isVisible()) {
+        for (const client of [host, alice, bob, carol]) {
+          await client.page.locator('[data-role="confirm-next-round"]').click()
+        }
       }
       await host.page.waitForTimeout(200)
     }
@@ -189,8 +194,10 @@ test('pre-game question pool gathering, host moderation, player ready confirmati
       if (await host.page.locator('[data-role="calculate-score"]').isVisible()) {
         await host.page.locator('[data-role="calculate-score"]').click()
       }
-      if (await host.page.locator('[data-role="next-round"]').isVisible()) {
-        await host.page.locator('[data-role="next-round"]').click()
+      if (await host.page.locator('[data-role="confirm-next-round"]').isVisible()) {
+        for (const client of [host, alice, bob, carol]) {
+          await client.page.locator('[data-role="confirm-next-round"]').click()
+        }
       }
       await host.page.waitForTimeout(200)
     }

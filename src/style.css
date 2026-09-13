@@ -388,6 +388,29 @@ h1 {
   letter-spacing: 0.08em;
 }
 
+.waiting-for-host {
+  color: #facc15;
+  animation: waiting-for-host-blink 1.2s ease-in-out infinite;
+}
+
+@keyframes waiting-for-host-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .waiting-for-host,
+  .start-round-button {
+    animation: none;
+  }
+}
+
 .room-card strong {
   font-size: 2rem;
 }
@@ -406,6 +429,21 @@ h1 {
   color: white;
   font-weight: 700;
   padding: 12px 18px;
+}
+
+.start-round-button {
+  animation: start-round-blink 1.2s ease-in-out infinite;
+}
+
+@keyframes start-round-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.45;
+  }
 }
 
 .primary-button:disabled {

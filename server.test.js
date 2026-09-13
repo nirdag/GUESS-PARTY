@@ -44,6 +44,9 @@ import {
   setPlayerReady,
   canStartGame,
   broadcastRoom,
+  getRoundEndConfirmerIds,
+  hasAllRoundEndConfirmed,
+  canConfirmNextRound,
 } from './server.js';
 
 // Mock room/player creation for testing
@@ -76,6 +79,7 @@ function createTestRoom() {
     questionsPlayedThisGame: 0,
     allowPlayerSuggestions: false,
     suggestedQuestions: [],
+    roundEndConfirmedIds: [],
   };
 }
 
@@ -470,6 +474,64 @@ describe('HIGH: Game Flow Transitions', () => {
     advanceGuessRound(room);
 
     expect(room.guesses).toHaveLength(0);
+  });
+
+  it('calculateRoundScores resets roundEndConfirmedIds for the new round-end', () => {
+    const player1 = createTestPlayer('p1', 'Alice');
+    room.players = [player1];
+    room.answerQueue = [{ playerId: 'p1', text: 'test', playerName: 'Alice' }];
+    room.currentAnswer = room.answerQueue[0];
+    room.phase = 'guessing';
+    room.guesses = [];
+    room.roundEndConfirmedIds = [room.hostId, 'p1'];
+
+    calculateRoundScores(room);
+
+    expect(room.roundEndConfirmedIds).toEqual([]);
+  });
+});
+
+describe('HIGH: Round-end confirmations', () => {
+  let room;
+
+  beforeEach(() => {
+    room = createTestRoom();
+    room.phase = 'round-end';
+    room.players = [createTestPlayer('p1', 'Alice'), createTestPlayer('p2', 'Bob')];
+  });
+
+  it('getRoundEndConfirmerIds includes the host and all connected players', () => {
+    const ids = getRoundEndConfirmerIds(room);
+    expect(ids).toEqual(new Set([room.hostId, 'p1', 'p2']));
+  });
+
+  it('getRoundEndConfirmerIds excludes disconnected players', () => {
+    room.players[1].disconnectedAt = Date.now();
+    const ids = getRoundEndConfirmerIds(room);
+    expect(ids).toEqual(new Set([room.hostId, 'p1']));
+  });
+
+  it('hasAllRoundEndConfirmed is false until every required id has confirmed', () => {
+    room.roundEndConfirmedIds = [room.hostId, 'p1'];
+    expect(hasAllRoundEndConfirmed(room)).toBe(false);
+
+    room.roundEndConfirmedIds = [room.hostId, 'p1', 'p2'];
+    expect(hasAllRoundEndConfirmed(room)).toBe(true);
+  });
+
+  it('hasAllRoundEndConfirmed ignores disconnected players', () => {
+    room.players[1].disconnectedAt = Date.now();
+    room.roundEndConfirmedIds = [room.hostId, 'p1'];
+    expect(hasAllRoundEndConfirmed(room)).toBe(true);
+  });
+
+  it('canConfirmNextRound allows the host and connected players only during round-end', () => {
+    expect(canConfirmNextRound(room, room.hostId)).toBe(true);
+    expect(canConfirmNextRound(room, 'p1')).toBe(true);
+    expect(canConfirmNextRound(room, 'unknown-player')).toBe(false);
+
+    room.phase = 'guessing';
+    expect(canConfirmNextRound(room, 'p1')).toBe(false);
   });
 });
 
@@ -1824,6 +1886,7 @@ describe('HIGH: Pre-game question pool mode', () => {
     expect(room.questionPool).toHaveLength(2);
     expect(room.currentPoolQuestionIndex).toBe(0);
     expect(room.askingPlayerId).toBeNull(); // All players can answer
+    expect(makeRoomState(room).questionAuthorName).toBe(room.questionPool[0].playerName);
 
     // All 3 players submit answers (including author)
     submitAnswer(room, alice.id, 'Alice answer');
@@ -1834,6 +1897,7 @@ describe('HIGH: Pre-game question pool mode', () => {
     // Lock answers and guess
     lockAnswers(room);
     expect(room.phase).toBe('guessing');
+    expect(makeRoomState(room).questionAuthorName).toBeNull();
 
     // Clear answer queue to simulate completing all answer guessing in Question 1
     room.answerQueue = [];

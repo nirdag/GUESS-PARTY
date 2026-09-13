@@ -192,6 +192,7 @@
   "hostManaging.liveLeaderboard": "Live leaderboard",
 
   "playerAnswering.thanksSubmitted": "Thank you for submitting your response.",
+  "playerAnswering.questionBy": "Question by {name}: {question}",
   "playerAnswering.waitingForOthers": "Waiting for the other players to submit their answers...",
   "playerAnswering.waitingForPlayers": "Waiting for {players} to submit their answer.",
   "playerAnswering.allAnswersReady": "Everything is ready. waiting for the host to start the game.",
@@ -250,6 +251,12 @@
   "roundEnd.missedIt": "😅 You missed it",
   "roundEnd.nextRound": "Next round",
   "roundEnd.goToFinalBoard": "Go to final score board",
+  "roundEnd.confirmNextRound": "Confirm \u2014 next round",
+  "roundEnd.confirmGoToFinalBoard": "Confirm \u2014 go to final board",
+  "roundEnd.waitingForConfirmations": "Waiting for {players} to confirm to continue",
+  "roundEnd.allConfirmed": "Everyone confirmed \u2014 moving on\u2026",
+  "roundEnd.youConfirmed": "You confirmed. Waiting for others\u2026",
+  "roundEnd.forceAdvance": "Skip waiting (host)",
 
   "resultOverlay.greatGuess": "GREAT GUESS!",
   "resultOverlay.youWereCorrect": "YOU WERE CORRECT!",

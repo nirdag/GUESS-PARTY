@@ -115,8 +115,29 @@ function safePlayer(player, room = null) {
     score: player.score,
     avatar: player.avatar,
     ready: Boolean(player.ready),
+    connected: !player.disconnectedAt,
     poolQuestionCount: room && room.poolQuestions ? room.poolQuestions.filter((q) => q.playerId === player.id).length : 0,
   };
+}
+
+// Required round-end confirmers = host + every currently-connected player (disconnected players never block auto-advance).
+function getRoundEndConfirmerIds(room) {
+  const ids = new Set([room.hostId]);
+  room.players.forEach((player) => {
+    if (!player.disconnectedAt) {
+      ids.add(player.id);
+    }
+  });
+  return ids;
+}
+
+function hasAllRoundEndConfirmed(room) {
+  const required = getRoundEndConfirmerIds(room);
+  return [...required].every((id) => room.roundEndConfirmedIds.includes(id));
+}
+
+function canConfirmNextRound(room, playerId) {
+  return Boolean(room && room.phase === 'round-end' && playerId && getRoundEndConfirmerIds(room).has(playerId));
 }
 
 function publicSuggestion(suggestion) {
@@ -318,6 +339,9 @@ function makeRoomState(room, viewerPlayerId = null) {
     phase: room.phase,
     answerRoundNumber: room.answerRoundNumber,
     question: room.question,
+    questionAuthorName: room.phase === 'answer-collection' && room.questionPoolMode
+      ? room.questionPool?.[room.currentPoolQuestionIndex]?.playerName || null
+      : null,
     // Withheld while guessing is live, otherwise a client could read the correct author off the network payload.
     answerAuthorId: room.phase === 'guessing' ? null : room.answerAuthorId,
     selectedAnswer: room.selectedAnswer,
@@ -328,8 +352,10 @@ function makeRoomState(room, viewerPlayerId = null) {
     guesses: room.guesses,
     roundResults: room.roundResults,
     hostId: room.hostId,
+    hostName: room.hostName,
     hostAvatar: room.hostAvatar,
     language: room.language,
+    roundEndConfirmedIds: room.roundEndConfirmedIds || [],
     guessTimeoutSeconds: room.guessTimeoutSeconds,
     guessDeadlineMs: room.guessDeadlineMs,
     guessCountdownEndsAt: room.guessCountdownEndsAt,
@@ -544,6 +570,7 @@ function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvata
     questionPool: [],
     currentPoolQuestionIndex: 0,
     hostReady: false,
+    roundEndConfirmedIds: [],
   };
 
   if (room.hostIsPlayer) {
@@ -882,6 +909,7 @@ function prepareCurrentAnswer(room) {
       room.finalMatchup.autoRevealed = true;
       room.roundResults = [];
       room.phase = 'round-end';
+      room.roundEndConfirmedIds = [];
       broadcastRoom(room);
       return;
     }
@@ -987,6 +1015,7 @@ function calculateRoundScores(room) {
 
   room.phase = 'round-end';
   room.timeLeft = 0;
+  room.roundEndConfirmedIds = [];
   broadcastRoom(room);
 }
 
@@ -1583,18 +1612,26 @@ wss.on('connection', (socket, request) => {
           break;
         }
 
-        case 'advance-answer': {
-          // In host-as-player rooms without questionPoolMode, the current asker approves moving to the next round.
-          const canAdvance = room && (
-            room.questionPoolMode
-              ? room.hostId === socket.playerId
-              : (room.hostIsPlayer
-                  ? socket.playerId === room.askingPlayerId
-                  : room.hostId === socket.playerId)
-          );
-          if (!canAdvance) {
+        case 'confirm-next-round': {
+          if (!canConfirmNextRound(room, socket.playerId)) {
             return;
           }
+          if (!room.roundEndConfirmedIds.includes(socket.playerId)) {
+            room.roundEndConfirmedIds.push(socket.playerId);
+          }
+          logger.event('round-end-confirmed', { roomCode: room.code, playerId: socket.playerId });
+          broadcastRoom(room);
+          if (hasAllRoundEndConfirmed(room)) {
+            advanceGuessRound(room);
+          }
+          break;
+        }
+
+        case 'force-advance-round': {
+          if (!room || room.phase !== 'round-end' || room.hostId !== socket.playerId) {
+            return;
+          }
+          logger.event('round-force-advanced', { roomCode: room.code });
           advanceGuessRound(room);
           break;
         }
@@ -1751,6 +1788,9 @@ export {
   setPlayerReady,
   canStartGame,
   broadcastRoom,
+  getRoundEndConfirmerIds,
+  hasAllRoundEndConfirmed,
+  canConfirmNextRound,
 };
 
 // Graceful shutdown for testing
