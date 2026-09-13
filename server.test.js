@@ -35,6 +35,14 @@ import {
   canSuggestQuestion,
   canDeleteSuggestion,
   canDismissSuggestion,
+  canSubmitPoolQuestion,
+  addPoolQuestion,
+  canDeletePoolQuestion,
+  deletePoolQuestion,
+  canDiscardPoolQuestion,
+  discardPoolQuestion,
+  setPlayerReady,
+  canStartGame,
   broadcastRoom,
 } from './server.js';
 
@@ -1666,5 +1674,188 @@ describe('HIGH: Player-suggested questions', () => {
       expect(canDismissSuggestion(room, null)).toBe(false);
       expect(canDismissSuggestion(room, room.hostId)).toBe(true);
     });
+  });
+});
+
+describe('HIGH: Pre-game question pool mode', () => {
+  function createTestSocket(playerId) {
+    return {
+      playerId,
+      readyState: 1,
+      sent: [],
+      send(data) {
+        this.sent.push(JSON.parse(data));
+      },
+    };
+  }
+
+  it('createRoom respects questionPoolMode and disables player suggestions', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', questionPoolMode: true, allowPlayerSuggestions: true });
+    expect(room.questionPoolMode).toBe(true);
+    expect(room.allowPlayerSuggestions).toBe(false);
+    expect(room.poolQuestions).toEqual([]);
+    expect(room.askingPlayerId).toBeNull();
+  });
+
+  it('allows players and host to add up to 3 questions with 8-220 characters', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', questionPoolMode: true });
+    const alice = addPlayerToRoom(room, 'Alice');
+
+    // Short question (< 8 chars)
+    expect(addPoolQuestion(room, alice.id, alice.name, 'Too?')).toBeNull();
+
+    // Valid questions
+    const q1 = addPoolQuestion(room, alice.id, alice.name, 'What is your secret superpower?');
+    const q2 = addPoolQuestion(room, alice.id, alice.name, 'What is the weirdest food you love?');
+    const q3 = addPoolQuestion(room, alice.id, alice.name, 'If you could time travel, where to?');
+    expect(q1).not.toBeNull();
+    expect(q2).not.toBeNull();
+    expect(q3).not.toBeNull();
+    expect(room.poolQuestions).toHaveLength(3);
+
+    // 4th question rejected (limit 3 per player)
+    expect(canSubmitPoolQuestion(room, alice.id)).toBe(false);
+    expect(addPoolQuestion(room, alice.id, alice.name, 'A fourth question should not be allowed?')).toBeNull();
+    expect(room.poolQuestions).toHaveLength(3);
+
+    // Host can also submit up to 3 questions
+    expect(canSubmitPoolQuestion(room, room.hostId)).toBe(true);
+    const hostQ = addPoolQuestion(room, room.hostId, room.hostName, 'What is the best movie of all time?');
+    expect(hostQ).not.toBeNull();
+    expect(room.poolQuestions).toHaveLength(4);
+  });
+
+  it('author can delete their own pool question', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', questionPoolMode: true });
+    const alice = addPlayerToRoom(room, 'Alice');
+    const bob = addPlayerToRoom(room, 'Bob');
+    const q1 = addPoolQuestion(room, alice.id, alice.name, 'What is your favorite childhood game?');
+
+    expect(canDeletePoolQuestion(room, q1.id, bob.id)).toBe(false);
+    expect(canDeletePoolQuestion(room, q1.id, alice.id)).toBe(true);
+
+    const deleted = deletePoolQuestion(room, q1.id);
+    expect(deleted.id).toBe(q1.id);
+    expect(room.poolQuestions).toHaveLength(0);
+  });
+
+  it('host can discard any question for appropriateness/duplicate inspection', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', questionPoolMode: true });
+    const alice = addPlayerToRoom(room, 'Alice');
+    const q1 = addPoolQuestion(room, alice.id, alice.name, 'Inappropriate or duplicate question here?');
+
+    expect(canDiscardPoolQuestion(room, alice.id)).toBe(false);
+    expect(canDiscardPoolQuestion(room, room.hostId)).toBe(true);
+
+    const discarded = discardPoolQuestion(room, q1.id);
+    expect(discarded.id).toBe(q1.id);
+    expect(room.poolQuestions).toHaveLength(0);
+  });
+
+  it('tracks player ready status and validates canStartGame', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', questionPoolMode: true });
+    const alice = addPlayerToRoom(room, 'Alice');
+    const bob = addPlayerToRoom(room, 'Bob');
+    const charlie = addPlayerToRoom(room, 'Charlie');
+
+    // Need at least 1 question
+    expect(canStartGame(room)).toBe(false);
+
+    addPoolQuestion(room, alice.id, alice.name, 'What is your favorite hobby to do on weekends?');
+    expect(canStartGame(room)).toBe(false); // players not ready yet
+
+    setPlayerReady(room, alice.id, true);
+    setPlayerReady(room, bob.id, true);
+    expect(canStartGame(room)).toBe(false); // charlie not ready
+
+    setPlayerReady(room, charlie.id, true);
+    expect(canStartGame(room)).toBe(true); // all 3 ready and >=1 question
+  });
+
+  it('privacy: broadcastRoom sends full poolQuestions list to host only, and only myPoolQuestions to regular players', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', questionPoolMode: true });
+    const alice = addPlayerToRoom(room, 'Alice');
+    const bob = addPlayerToRoom(room, 'Bob');
+
+    addPoolQuestion(room, alice.id, alice.name, 'What is Alice secret question here?');
+    addPoolQuestion(room, bob.id, bob.name, 'What is Bob secret question here?');
+
+    const hostSocket = createTestSocket(room.hostId);
+    const aliceSocket = createTestSocket(alice.id);
+    const bobSocket = createTestSocket(bob.id);
+    room.clients.add(hostSocket);
+    room.clients.add(aliceSocket);
+    room.clients.add(bobSocket);
+
+    broadcastRoom(room);
+
+    // Host sees both questions
+    expect(hostSocket.sent[0].state.poolQuestions).toHaveLength(2);
+    expect(hostSocket.sent[0].state.poolQuestionCount).toBe(2);
+
+    // Alice sees 0 in public poolQuestions, but 1 in myPoolQuestions
+    expect(aliceSocket.sent[0].state.poolQuestions).toHaveLength(0);
+    expect(aliceSocket.sent[0].state.myPoolQuestions).toHaveLength(1);
+    expect(aliceSocket.sent[0].state.myPoolQuestions[0].text).toBe('What is Alice secret question here?');
+    expect(aliceSocket.sent[0].state.poolQuestionCount).toBe(2);
+
+    // Bob sees only Bob's in myPoolQuestions
+    expect(bobSocket.sent[0].state.poolQuestions).toHaveLength(0);
+    expect(bobSocket.sent[0].state.myPoolQuestions).toHaveLength(1);
+    expect(bobSocket.sent[0].state.myPoolQuestions[0].text).toBe('What is Bob secret question here?');
+  });
+
+  it('plays all pool questions across consecutive rounds and ends game on last question', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', questionPoolMode: true });
+    const alice = addPlayerToRoom(room, 'Alice');
+    const bob = addPlayerToRoom(room, 'Bob');
+    const charlie = addPlayerToRoom(room, 'Charlie');
+
+    addPoolQuestion(room, alice.id, alice.name, 'Question Number One for the test pool?');
+    addPoolQuestion(room, bob.id, bob.name, 'Question Number Two for the test pool?');
+
+    setPlayerReady(room, alice.id, true);
+    setPlayerReady(room, bob.id, true);
+    setPlayerReady(room, charlie.id, true);
+
+    // Start round from lobby
+    startRound(room);
+    expect(room.phase).toBe('answer-collection');
+    expect(room.questionPool).toHaveLength(2);
+    expect(room.currentPoolQuestionIndex).toBe(0);
+    expect(room.askingPlayerId).toBeNull(); // All players can answer
+
+    // All 3 players submit answers (including author)
+    submitAnswer(room, alice.id, 'Alice answer');
+    submitAnswer(room, bob.id, 'Bob answer');
+    submitAnswer(room, charlie.id, 'Charlie answer');
+    expect(room.answers).toHaveLength(3);
+
+    // Lock answers and guess
+    lockAnswers(room);
+    expect(room.phase).toBe('guessing');
+
+    // Clear answer queue to simulate completing all answer guessing in Question 1
+    room.answerQueue = [];
+    calculateRoundScores(room);
+    expect(room.phase).toBe('round-end');
+
+    // Advance round -> should start Question 2 (index 1)
+    advanceGuessRound(room);
+    expect(room.phase).toBe('answer-collection');
+    expect(room.currentPoolQuestionIndex).toBe(1);
+
+    // Answering for Question 2
+    submitAnswer(room, alice.id, 'Alice answer 2');
+    submitAnswer(room, bob.id, 'Bob answer 2');
+    submitAnswer(room, charlie.id, 'Charlie answer 2');
+    lockAnswers(room);
+    room.answerQueue = [];
+    calculateRoundScores(room);
+    expect(room.phase).toBe('round-end');
+
+    // Advance round -> no more questions in pool, should transition to game-end
+    advanceGuessRound(room);
+    expect(room.phase).toBe('game-end');
   });
 });

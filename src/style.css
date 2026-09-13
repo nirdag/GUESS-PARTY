@@ -624,6 +624,12 @@ h1 {
   position: relative;
 }
 
+.rounds-left {
+  margin: -10px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 .guess-intro-overlay {
   position: absolute;
   inset: 0;

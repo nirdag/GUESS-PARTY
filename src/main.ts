@@ -24,6 +24,14 @@ type SuggestionEntry = {
   text: string
 }
 
+type PoolQuestion = {
+  id: string
+  playerId: string
+  playerName: string
+  text: string
+  createdAt?: number
+}
+
 type RoomSession = {
   roomCode: string
   role: Role
@@ -37,6 +45,8 @@ type Player = {
   name: string
   score: number
   avatar: string
+  ready?: boolean
+  poolQuestionCount?: number
 }
 
 type GuessRecord = {
@@ -90,6 +100,14 @@ type RoomState = {
   allowPlayerSuggestions: boolean
   suggestedQuestions: SuggestionEntry[]
   mySuggestedQuestions: SuggestionEntry[]
+  questionPoolMode?: boolean
+  poolQuestions?: PoolQuestion[]
+  myPoolQuestions?: PoolQuestion[]
+  poolQuestionCount?: number
+  poolTotalQuestions?: number
+  currentPoolQuestionIndex?: number
+  allPlayersReady?: boolean
+  canStartGame?: boolean
 }
 
 const app = document.querySelector<HTMLDivElement>('#app')
@@ -207,6 +225,16 @@ const state = {
   suggestedQuestions: [] as SuggestionEntry[],
   mySuggestedQuestions: [] as SuggestionEntry[],
   suggestionDraft: '',
+  questionPoolMode: false,
+  poolQuestions: [] as PoolQuestion[],
+  myPoolQuestions: [] as PoolQuestion[],
+  poolQuestionDraft: '',
+  isPlayerReady: false,
+  poolQuestionCount: 0,
+  poolTotalQuestions: 0,
+  currentPoolQuestionIndex: 0,
+  allPlayersReady: false,
+  canStartGame: false,
   askerOverlayConfirmed: false,
   askQuestionDraft: '',
   adminError: '',
@@ -540,7 +568,18 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   state.allowPlayerSuggestions = serverState.allowPlayerSuggestions ?? state.allowPlayerSuggestions
   state.suggestedQuestions = serverState.suggestedQuestions ?? state.suggestedQuestions
   state.mySuggestedQuestions = serverState.mySuggestedQuestions ?? state.mySuggestedQuestions
+  state.questionPoolMode = serverState.questionPoolMode ?? state.questionPoolMode
+  state.poolQuestions = serverState.poolQuestions ?? state.poolQuestions
+  state.myPoolQuestions = serverState.myPoolQuestions ?? state.myPoolQuestions
+  state.poolQuestionCount = serverState.poolQuestionCount ?? state.poolQuestionCount
+  state.poolTotalQuestions = serverState.poolTotalQuestions ?? state.poolTotalQuestions
+  state.currentPoolQuestionIndex = serverState.currentPoolQuestionIndex ?? state.currentPoolQuestionIndex
+  state.allPlayersReady = serverState.allPlayersReady ?? state.allPlayersReady
+  state.canStartGame = serverState.canStartGame ?? state.canStartGame
   state.hasSubmittedAnswer = state.answers.some((answer) => answer.playerId === state.currentPlayerId)
+
+  const myPlayerObj = state.players.find((player) => player.id === state.currentPlayerId)
+  state.isPlayerReady = Boolean(myPlayerObj?.ready)
 
   if (serverState.askingPlayerId !== undefined && serverState.askingPlayerId !== state.askingPlayerId) {
     state.askingPlayerId = serverState.askingPlayerId
@@ -570,20 +609,28 @@ function applyRoomState(serverState: Partial<RoomState>): void {
     state.currentPlayerId = matchedPlayer?.id ?? state.players[0]?.id ?? state.currentPlayerId
   }
 
-  const isCurrentAsker = state.hostIsPlayer && state.currentPlayerId === state.askingPlayerId
+  const isCurrentAsker = state.hostIsPlayer && !state.questionPoolMode && state.currentPlayerId === state.askingPlayerId
 
   if (state.phase === 'lobby') {
     state.screen = 'lobby'
   } else if (state.phase === 'asking') {
     state.screen = isCurrentAsker ? 'ask-question' : 'waiting-for-question'
   } else if (state.phase === 'answer-collection') {
-    state.screen = state.hostIsPlayer
-      ? (isCurrentAsker ? 'host-managing' : 'player-answering')
-      : (state.role === 'host' ? 'host-managing' : 'player-answering')
+    if (state.questionPoolMode) {
+      state.screen = state.role === 'host' && !state.hostIsPlayer ? 'host-managing' : 'player-answering'
+    } else {
+      state.screen = state.hostIsPlayer
+        ? (isCurrentAsker ? 'host-managing' : 'player-answering')
+        : (state.role === 'host' ? 'host-managing' : 'player-answering')
+    }
   } else if (state.phase === 'guessing') {
-    state.screen = state.hostIsPlayer
-      ? (isCurrentAsker ? 'host-managing' : 'player-guessing')
-      : (state.role === 'host' ? 'host-managing' : 'player-guessing')
+    if (state.questionPoolMode) {
+      state.screen = state.role === 'host' && !state.hostIsPlayer ? 'host-managing' : 'player-guessing'
+    } else {
+      state.screen = state.hostIsPlayer
+        ? (isCurrentAsker ? 'host-managing' : 'player-guessing')
+        : (state.role === 'host' ? 'host-managing' : 'player-guessing')
+    }
   } else if (state.phase === 'round-end') {
     state.screen = 'round-end'
   } else if (state.phase === 'game-end') {
@@ -702,7 +749,7 @@ function renderGuessIntroOverlay(): string {
   `
 }
 
-function createRoomSession(name: string, language: LanguageCode, avatar: string, guessTimeoutSeconds: number, addSelfAsPlayer: boolean, allowPlayerSuggestions: boolean): void {
+function createRoomSession(name: string, language: LanguageCode, avatar: string, guessTimeoutSeconds: number, addSelfAsPlayer: boolean, allowPlayerSuggestions: boolean, questionPoolMode: boolean = false): void {
   const nextName = name.trim() || t('prompts.defaultHostName')
   state.playerName = nextName
   state.role = 'host'
@@ -710,20 +757,21 @@ function createRoomSession(name: string, language: LanguageCode, avatar: string,
   state.myAvatar = avatar
   state.guessTimeoutSeconds = guessTimeoutSeconds
   state.addSelfAsPlayer = addSelfAsPlayer
-  // Mutually exclusive with host-as-player: a rotating asker already writes their own question each round.
-  state.allowPlayerSuggestions = addSelfAsPlayer ? false : allowPlayerSuggestions
+  state.questionPoolMode = questionPoolMode
+  // Mutually exclusive with host-as-player or question pool mode:
+  state.allowPlayerSuggestions = (addSelfAsPlayer || questionPoolMode) ? false : allowPlayerSuggestions
   setLanguage(language)
   shouldRestoreRoomSession = false
   clearStoredRoomSession()
   state.screen = 'lobby'
 
   if (socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds, addSelfAsPlayer, allowPlayerSuggestions: state.allowPlayerSuggestions }))
+    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds, addSelfAsPlayer, allowPlayerSuggestions: state.allowPlayerSuggestions, questionPoolMode }))
     return
   }
 
   queuedAction = () => {
-    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds, addSelfAsPlayer, allowPlayerSuggestions: state.allowPlayerSuggestions }))
+    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds, addSelfAsPlayer, allowPlayerSuggestions: state.allowPlayerSuggestions, questionPoolMode }))
   }
 
   renderApp()
@@ -791,6 +839,11 @@ function startRound(): void {
     return
   }
 
+  if (state.questionPoolMode) {
+    sendSocketMessage('start-round', {})
+    return
+  }
+
   const isAsker = state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host'
 
   if (isAsker) {
@@ -828,6 +881,32 @@ function submitQuestion(questionText: string): void {
   }
 
   sendSocketMessage('submit-question', { question: trimmed })
+}
+
+function submitPoolQuestion(text: string): void {
+  if (!state.roomCode) {
+    return
+  }
+
+  const trimmed = text.trim()
+  if (trimmed.length < 8 || trimmed.length > 220) {
+    window.alert(t('prompts.questionTooShort'))
+    return
+  }
+
+  sendSocketMessage('submit-pool-question', { text: trimmed })
+}
+
+function deletePoolQuestion(questionId: string): void {
+  sendSocketMessage('delete-pool-question', { questionId })
+}
+
+function discardPoolQuestion(questionId: string): void {
+  sendSocketMessage('discard-pool-question', { questionId })
+}
+
+function confirmNoMoreQuestions(isReady: boolean = true): void {
+  sendSocketMessage('confirm-no-more-questions', { isReady })
 }
 
 function revealAnswer(): void {
@@ -1082,10 +1161,15 @@ function renderHostSetup(): void {
           </label>
           <small class="field-hint">${t('hostSetup.addSelfHint')}</small>
           <label class="checkbox-field">
-            <input id="host-setup-allow-suggestions" type="checkbox" ${state.allowPlayerSuggestions ? 'checked' : ''} ${state.addSelfAsPlayer ? 'disabled' : ''} />
+            <input id="host-setup-allow-suggestions" type="checkbox" ${state.allowPlayerSuggestions ? 'checked' : ''} ${state.addSelfAsPlayer || state.questionPoolMode ? 'disabled' : ''} />
             <span>${t('hostSetup.allowSuggestionsLabel')}</span>
           </label>
           <small class="field-hint">${t('hostSetup.allowSuggestionsHint')}</small>
+          <label class="checkbox-field">
+            <input id="host-setup-question-pool" type="checkbox" ${state.questionPoolMode ? 'checked' : ''} />
+            <span>${t('hostSetup.questionPoolLabel')}</span>
+          </label>
+          <small class="field-hint">${t('hostSetup.questionPoolHint')}</small>
           <button class="primary-button" type="submit">${t('hostSetup.submit')}</button>
         </form>
 
@@ -1158,18 +1242,22 @@ function renderHostSetup(): void {
 
   wireMyGalleryManagement()
 
-  // Mutually exclusive: a rotating asker already writes their own question, so suggestions have no host to hand them to.
+  // Mutually exclusive: a rotating asker already writes their own question, and question pool has its own gathering phase.
   const addSelfCheckbox = root.querySelector<HTMLInputElement>('#host-setup-add-self')
   const allowSuggestionsCheckbox = root.querySelector<HTMLInputElement>('#host-setup-allow-suggestions')
+  const questionPoolCheckbox = root.querySelector<HTMLInputElement>('#host-setup-question-pool')
 
-  addSelfCheckbox?.addEventListener('change', () => {
-    if (addSelfCheckbox.checked && allowSuggestionsCheckbox) {
+  const updateCheckboxStates = () => {
+    if ((addSelfCheckbox?.checked || questionPoolCheckbox?.checked) && allowSuggestionsCheckbox) {
       allowSuggestionsCheckbox.checked = false
       allowSuggestionsCheckbox.disabled = true
     } else if (allowSuggestionsCheckbox) {
       allowSuggestionsCheckbox.disabled = false
     }
-  })
+  }
+
+  addSelfCheckbox?.addEventListener('change', updateCheckboxStates)
+  questionPoolCheckbox?.addEventListener('change', updateCheckboxStates)
 
   root.querySelector<HTMLFormElement>('#host-setup-form')?.addEventListener('submit', (event) => {
     event.preventDefault()
@@ -1177,7 +1265,8 @@ function renderHostSetup(): void {
     const language = (root.querySelector<HTMLSelectElement>('#host-setup-language')?.value ?? 'en') as LanguageCode
     const addSelfAsPlayer = root.querySelector<HTMLInputElement>('#host-setup-add-self')?.checked ?? false
     const allowPlayerSuggestions = root.querySelector<HTMLInputElement>('#host-setup-allow-suggestions')?.checked ?? false
-    createRoomSession(name, language, state.selectedAvatar, state.guessTimeoutSeconds, addSelfAsPlayer, allowPlayerSuggestions)
+    const questionPoolMode = root.querySelector<HTMLInputElement>('#host-setup-question-pool')?.checked ?? false
+    createRoomSession(name, language, state.selectedAvatar, state.guessTimeoutSeconds, addSelfAsPlayer, allowPlayerSuggestions, questionPoolMode)
   })
 }
 
@@ -1774,12 +1863,139 @@ function wireSuggestionPanels(): void {
   })
 }
 
+function renderQuestionPoolGatheringPanel(): string {
+  const myCount = state.myPoolQuestions.length
+  const isMaxReached = myCount >= 3
+  const isReady = state.isPlayerReady
+
+  return `
+    <section class="panel question-pool-panel">
+      <div class="section-head">
+        <h2>${t('lobby.questionPoolTitle')}</h2>
+        <span class="chip">${t('lobby.questionCountBadge', { count: state.poolQuestionCount })}</span>
+      </div>
+      <p class="subtitle">${t('lobby.questionPoolSubtitle')}</p>
+
+      ${!isReady && !isMaxReached
+        ? `
+          <form id="pool-question-form" class="host-question-form" style="margin-top: 14px;">
+            <label for="pool-question-input">${t('lobby.poolQuestionLabel', { count: myCount })}</label>
+            <textarea id="pool-question-input" rows="2" maxlength="220" placeholder="${t('lobby.poolQuestionPlaceholder')}">${state.poolQuestionDraft}</textarea>
+            <div class="host-question-actions">
+              <button class="primary-button" type="submit">${t('lobby.submitPoolQuestion')}</button>
+            </div>
+          </form>
+        `
+        : isMaxReached && !isReady
+          ? `<p class="field-hint" style="margin-top: 10px;">${t('lobby.maxQuestionsReached')}</p>`
+          : ''}
+
+      ${state.myPoolQuestions.length > 0
+        ? `
+          <div class="result-list" style="margin-top: 14px;">
+            <div class="section-head">
+              <h2>${t('lobby.myPoolQuestionsTitle')}</h2>
+            </div>
+            ${state.myPoolQuestions
+              .map(
+                (q) => `
+                  <div class="result-row">
+                    <span>${q.text}</span>
+                    ${!isReady ? `<button type="button" class="ghost-button" data-role="delete-pool-question" data-question-id="${q.id}">${t('lobby.deleteQuestion')}</button>` : ''}
+                  </div>
+                `,
+              )
+              .join('')}
+          </div>
+        `
+        : ''}
+
+      <div class="pool-ready-box" style="display: flex; justify-content: space-between; align-items: center; margin-top: 16px; padding: 14px; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border); border-radius: 12px;">
+        <div>
+          <span>${isReady ? `✅ ${t('lobby.readyConfirmed')}` : `✍️ ${t('lobby.notReadyYet')}`}</span>
+        </div>
+        ${isReady
+          ? `<button type="button" class="ghost-button" data-role="toggle-pool-ready" data-ready="false">${t('lobby.changeQuestions')}</button>`
+          : `<button type="button" class="primary-button" data-role="toggle-pool-ready" data-ready="true">${t('lobby.noMoreQuestionsButton')}</button>`}
+      </div>
+    </section>
+  `
+}
+
+function renderHostQuestionModerationPanel(): string {
+  return `
+    <section class="panel host-moderation-panel">
+      <div class="section-head">
+        <h2>${t('lobby.hostModerationTitle')}</h2>
+        <span class="chip">${t('lobby.questionCountBadge', { count: state.poolQuestionCount })}</span>
+      </div>
+      <p class="subtitle">${t('lobby.hostModerationSubtitle')}</p>
+
+      <div class="result-list" style="margin-top: 14px;">
+        ${state.poolQuestions.length > 0
+          ? state.poolQuestions
+              .map(
+                (q) => `
+                  <div class="result-row">
+                    <div>
+                      <span>${q.text}</span>
+                      <small style="display: block; color: var(--muted); margin-top: 2px;">— ${q.playerName}</small>
+                    </div>
+                    <button type="button" class="ghost-button" data-role="discard-pool-question" data-question-id="${q.id}">${t('lobby.discardQuestion')}</button>
+                  </div>
+                `,
+              )
+              .join('')
+          : `<div class="result-row"><span>${t('lobby.hostModerationEmpty')}</span></div>`}
+      </div>
+    </section>
+  `
+}
+
+function wireQuestionPoolPanels(): void {
+  const poolForm = root.querySelector<HTMLFormElement>('#pool-question-form')
+  poolForm?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const textarea = root.querySelector<HTMLTextAreaElement>('#pool-question-input')
+    const value = textarea?.value?.trim() ?? ''
+    if (value.length < 8) {
+      window.alert(t('prompts.questionTooShort'))
+      return
+    }
+    submitPoolQuestion(value)
+    state.poolQuestionDraft = ''
+    renderApp()
+  })
+
+  root.querySelectorAll<HTMLButtonElement>('[data-role="delete-pool-question"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      deletePoolQuestion(button.dataset.questionId ?? '')
+    })
+  })
+
+  root.querySelectorAll<HTMLButtonElement>('[data-role="discard-pool-question"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      discardPoolQuestion(button.dataset.questionId ?? '')
+    })
+  })
+
+  root.querySelectorAll<HTMLButtonElement>('[data-role="toggle-pool-ready"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const isReady = button.dataset.ready === 'true'
+      confirmNoMoreQuestions(isReady)
+    })
+  })
+}
+
 function renderLobby(): void {
   const leaderboard = [...state.players].sort((a, b) => b.score - a.score)
   const hostQuestionIsValid = state.customQuestion.trim().length >= 8
-  // In host-as-player rooms the game-start trigger belongs to the asker (always the host before the first round), not the host role itself.
   const isAsker = state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host'
   const ruleKeyPrefix = state.role === 'host' && !state.hostIsPlayer ? 'host' : 'player'
+
+  const canStartRound = state.questionPoolMode
+    ? Boolean(state.canStartGame)
+    : (isAsker ? hostQuestionIsValid : false)
 
   root.innerHTML = `
     <main class="shell">
@@ -1794,9 +2010,18 @@ function renderLobby(): void {
         <div class="room-card">
           <span class="chip">${t('lobby.roomCodeChip')}</span>
           <strong>${state.roomCode}</strong>
-          ${isAsker
-            ? `<button class="primary-button" type="button" data-role="start-round" ${hostQuestionIsValid ? '' : 'disabled'}>${t('lobby.startRound')}</button>`
-            : `<div class="chip">${t('lobby.waitingForHost')}</div>`}
+          ${state.role === 'host' || (!state.questionPoolMode && isAsker)
+            ? `
+              <button class="primary-button" type="button" data-role="start-round" ${canStartRound ? '' : 'disabled'}>${t('lobby.startRound')}</button>
+              ${state.questionPoolMode
+                ? (state.poolQuestionCount < 1
+                    ? `<small class="field-hint" style="color: #f87171;">${t('lobby.needAtLeastOneQuestion')}</small>`
+                    : (!state.allPlayersReady
+                        ? `<small class="field-hint">${t('lobby.waitingForPlayersReady', { ready: state.players.filter((p) => p.ready).length, total: state.players.length })}</small>`
+                        : `<small class="field-hint" style="color: #4ade80;">${t('lobby.readyToStart')}</small>`))
+                : ''}
+            `
+            : `<div class="chip">${state.questionPoolMode ? (state.allPlayersReady ? t('lobby.waitingForHost') : t('lobby.waitingForPlayersReady', { ready: state.players.filter((p) => p.ready).length, total: state.players.length })) : t('lobby.waitingForHost')}</div>`}
         </div>
 
         ${state.role === 'host'
@@ -1820,7 +2045,12 @@ function renderLobby(): void {
               (player) => `
                 <div class="player-pill ${player.id === state.currentPlayerId ? 'active' : ''}">
                   <span class="avatar">${formatPlayerAvatar(player)}</span>
-                  <span>${player.name}</span>
+                  <div style="display: flex; flex-direction: column; gap: 2px;">
+                    <span>${player.name}</span>
+                    ${state.questionPoolMode
+                      ? `<small style="font-size: 11px; color: ${player.ready ? '#4ade80' : 'var(--muted)'};">${player.ready ? `✅ ${t('lobby.playerReadyBadge')}` : `✍️ ${t('lobby.playerNotReadyBadge')}`} (${player.poolQuestionCount || 0}/3)</small>`
+                      : ''}
+                  </div>
                 </div>
               `,
             )
@@ -1828,51 +2058,68 @@ function renderLobby(): void {
         </div>
       </section>
 
-      ${isAsker
+      ${state.questionPoolMode
         ? `
-          <section class="panel">
-            <div class="section-head">
-              <h2>${t('lobby.roundPrompt')}</h2>
-              <span>${state.customQuestion.trim() ? t('lobby.readyToPlay') : t('lobby.required')}</span>
-            </div>
+          ${state.role === 'host' ? renderHostQuestionModerationPanel() : ''}
+          ${renderQuestionPoolGatheringPanel()}
 
-            <form id="host-question-form" class="host-question-form">
-              <label for="host-question">${t('lobby.questionLabel')}</label>
-              <textarea id="host-question" rows="3" maxlength="220" placeholder="${t('lobby.questionPlaceholder')}">${state.customQuestion}</textarea>
-              <div class="host-question-actions">
-                <button class="secondary-button" type="submit">${t('lobby.saveQuestion')}</button>
-                <button class="ghost-button" type="button" data-role="clear-question">${t('lobby.clear')}</button>
-                <button class="ghost-button" type="button" data-role="browse-gallery">${t('lobby.browseGallery')}</button>
-                ${state.account ? `<button class="ghost-button" type="button" data-role="save-to-gallery">${t('lobby.saveToGallery')}</button>` : ''}
-              </div>
-            </form>
-
-            ${state.showQuestionGallery ? renderGalleryPanel() : ''}
-
-            ${state.allowPlayerSuggestions ? renderSuggestionsPanel() : ''}
-
-            <div class="rules-list">
-              <div class="rule-item"><strong>1.</strong><span>${t(`lobby.${ruleKeyPrefix}Rule1`)}</span></div>
-              <div class="rule-item"><strong>2.</strong><span>${t(`lobby.${ruleKeyPrefix}Rule2`)}</span></div>
-              <div class="rule-item"><strong>3.</strong><span>${t(`lobby.${ruleKeyPrefix}Rule3`)}</span></div>
-              <div class="rule-item"><strong>4.</strong><span>${t(`lobby.${ruleKeyPrefix}Rule4`)}</span></div>
-            </div>
-          </section>
-          `
-        : `
           <section class="panel">
             <div class="section-head">
               <h2>${t('lobby.roomRules')}</h2>
             </div>
             <div class="rules-list">
-              <div class="rule-item"><strong>1.</strong><span>${t('lobby.playerRule1')}</span></div>
+              <div class="rule-item"><strong>1.</strong><span>${state.role === 'host' ? t('lobby.poolRulesHost') : t('lobby.poolRulesPlayer')}</span></div>
               <div class="rule-item"><strong>2.</strong><span>${t('lobby.playerRule2')}</span></div>
               <div class="rule-item"><strong>3.</strong><span>${t('lobby.playerRule3')}</span></div>
               <div class="rule-item"><strong>4.</strong><span>${t('lobby.playerRule4')}</span></div>
             </div>
           </section>
-          ${state.allowPlayerSuggestions && state.role === 'player' ? renderSuggestQuestionPanel() : ''}
-          `}
+        `
+        : isAsker
+          ? `
+            <section class="panel">
+              <div class="section-head">
+                <h2>${t('lobby.roundPrompt')}</h2>
+                <span>${state.customQuestion.trim() ? t('lobby.readyToPlay') : t('lobby.required')}</span>
+              </div>
+
+              <form id="host-question-form" class="host-question-form">
+                <label for="host-question">${t('lobby.questionLabel')}</label>
+                <textarea id="host-question" rows="3" maxlength="220" placeholder="${t('lobby.questionPlaceholder')}">${state.customQuestion}</textarea>
+                <div class="host-question-actions">
+                  <button class="secondary-button" type="submit">${t('lobby.saveQuestion')}</button>
+                  <button class="ghost-button" type="button" data-role="clear-question">${t('lobby.clear')}</button>
+                  <button class="ghost-button" type="button" data-role="browse-gallery">${t('lobby.browseGallery')}</button>
+                  ${state.account ? `<button class="ghost-button" type="button" data-role="save-to-gallery">${t('lobby.saveToGallery')}</button>` : ''}
+                </div>
+              </form>
+
+              ${state.showQuestionGallery ? renderGalleryPanel() : ''}
+
+              ${state.allowPlayerSuggestions ? renderSuggestionsPanel() : ''}
+
+              <div class="rules-list">
+                <div class="rule-item"><strong>1.</strong><span>${t(`lobby.${ruleKeyPrefix}Rule1`)}</span></div>
+                <div class="rule-item"><strong>2.</strong><span>${t(`lobby.${ruleKeyPrefix}Rule2`)}</span></div>
+                <div class="rule-item"><strong>3.</strong><span>${t(`lobby.${ruleKeyPrefix}Rule3`)}</span></div>
+                <div class="rule-item"><strong>4.</strong><span>${t(`lobby.${ruleKeyPrefix}Rule4`)}</span></div>
+              </div>
+            </section>
+            `
+          : `
+            <section class="panel">
+              <div class="section-head">
+                <h2>${t('lobby.roomRules')}</h2>
+              </div>
+              <div class="rules-list">
+                <div class="rule-item"><strong>1.</strong><span>${t('lobby.playerRule1')}</span></div>
+                <div class="rule-item"><strong>2.</strong><span>${t('lobby.playerRule2')}</span></div>
+                <div class="rule-item"><strong>3.</strong><span>${t('lobby.playerRule3')}</span></div>
+                <div class="rule-item"><strong>4.</strong><span>${t('lobby.playerRule4')}</span></div>
+              </div>
+            </section>
+            ${state.allowPlayerSuggestions && state.role === 'player' ? renderSuggestQuestionPanel() : ''}
+            `}
 
       <section class="panel">
         <div class="section-head">
@@ -1959,10 +2206,17 @@ function renderLobby(): void {
   })
 
   wireSuggestionPanels()
+  wireQuestionPoolPanels()
 }
 
-// Only meaningful in host-as-player rooms, where the question's author rotates each round.
+// Shows rotating asker in host-as-player rooms, or question progress in questionPoolMode.
 function renderQuestionAskerTag(): string {
+  if (state.questionPoolMode) {
+    const total = state.poolTotalQuestions || state.poolQuestionCount || 1
+    const current = Math.min(state.currentPoolQuestionIndex + 1, total)
+    return `<p class="asker-tag">${t('game.questionProgress', { current, total })}</p>`
+  }
+
   if (!state.hostIsPlayer) {
     return ''
   }
@@ -2079,8 +2333,8 @@ function renderWaitingForQuestion(): void {
 function renderHostManaging(): void {
   const visiblePlayers = state.players.filter((player) => player.id !== state.currentPlayerId)
   const guessMap = new Map(state.guesses.map((guess) => [guess.guesserId, guess]))
-  // In host-as-player rooms, the current asker controls the round, not necessarily the host account.
-  const canControlRound = state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host'
+  // In host-as-player rooms without questionPoolMode, the current asker controls the round. In questionPoolMode, host controls.
+  const canControlRound = state.questionPoolMode ? state.role === 'host' : (state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host')
 
   root.innerHTML = `
     <main class="shell">
@@ -2222,8 +2476,24 @@ function renderHostManaging(): void {
 
 function renderPlayerAnswering(): void {
   const alreadySubmitted = state.answers.some((entry) => entry.playerId === state.currentPlayerId)
-  // In host-as-player rooms, the current asker controls the round, not necessarily the host account.
-  const canControlRound = state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host'
+  // In host-as-player rooms without questionPoolMode, the current asker controls the round. In questionPoolMode, host controls.
+  const canControlRound = state.questionPoolMode ? state.role === 'host' : (state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host')
+
+  const submittedPlayerIds = new Set(state.answers.map((entry) => entry.playerId))
+  const remainingPlayers = state.players.filter((player) => {
+    if (!state.questionPoolMode && state.askingPlayerId && player.id === state.askingPlayerId) {
+      return false
+    }
+    return !submittedPlayerIds.has(player.id)
+  })
+
+  const remainingPlayersText = remainingPlayers
+    .map((player) => `${formatPlayerAvatar(player)} ${player.name}`)
+    .join(', ')
+
+  const waitingMessage = remainingPlayers.length > 0
+    ? t('playerAnswering.waitingForPlayers', { players: remainingPlayersText })
+    : t('playerAnswering.allAnswersReady')
 
   root.innerHTML = `
     <main class="shell">
@@ -2237,7 +2507,7 @@ function renderPlayerAnswering(): void {
           ? `
             <div class="mini-card">
               <span>${t('playerAnswering.thanksSubmitted')}</span>
-              <strong>${t('playerAnswering.waitingForOthers')}</strong>
+              <strong>${waitingMessage}</strong>
             </div>
           `
           : `
@@ -2280,8 +2550,8 @@ function renderFinalMatchupGuessing(): void {
     return
   }
 
-  // In host-as-player rooms, the current asker controls the round, not necessarily the host account.
-  const canControlRound = state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host'
+  // In host-as-player rooms without questionPoolMode, the current asker controls the round. In questionPoolMode, host controls.
+  const canControlRound = state.questionPoolMode ? state.role === 'host' : (state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host')
   // Both remaining authors already know the true pairing, so they sit this round out.
   const isExcludedAuthor = matchup.authorIds.includes(state.currentPlayerId)
   const authors = matchup.authorIds
@@ -2373,8 +2643,8 @@ function renderPlayerGuessing(): void {
     return
   }
 
-  // In host-as-player rooms, the current asker controls the round, not necessarily the host account.
-  const canControlRound = state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host'
+  // In host-as-player rooms without questionPoolMode, the current asker controls the round. In questionPoolMode, host controls.
+  const canControlRound = state.questionPoolMode ? state.role === 'host' : (state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host')
   // Players already revealed as a correct answer in an earlier round are no longer valid guesses.
   const guessOptions = state.players.filter((player) => player.id !== state.currentPlayerId && state.remainingAuthorIds.includes(player.id))
   const selectedGuessId = state.selectedGuessId ?? state.guesses.find((entry) => entry.guesserId === state.currentPlayerId)?.guessedId ?? null
@@ -2455,6 +2725,7 @@ function renderPlayerGuessing(): void {
 
 function renderRoundEnd(): void {
   const sortedPlayers = [...state.players].sort((a, b) => b.score - a.score)
+  const roundsLeft = state.finalMatchup ? 0 : Math.max(0, state.answers.length - state.answerRoundNumber - 1)
   const myResult = state.roundResults.find((result) => result.guesserName === getCurrentPlayer()?.name)
   const isEligibleToGuess = state.role === 'player'
     && state.currentPlayerId !== state.askingPlayerId
@@ -2464,7 +2735,7 @@ function renderRoundEnd(): void {
     : myResult
       ? myResult.correct ? 'success' : 'fail'
       : isEligibleToGuess ? 'no-guess' : null
-  const canAdvanceRound = state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host'
+  const canAdvanceRound = state.questionPoolMode ? state.role === 'host' : (state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host')
 
   root.innerHTML = `
     <main class="shell">
@@ -2473,6 +2744,7 @@ function renderRoundEnd(): void {
       <section class="panel summary-panel">
         <p class="eyebrow">${t('roundEnd.complete')}</p>
         <h1>${t('roundEnd.standings')}</h1>
+        <p class="rounds-left">${t('roundEnd.roundsLeft', { count: roundsLeft })}</p>
 
         <div class="leaderboard">
           ${sortedPlayers
@@ -2600,7 +2872,7 @@ function renderGameEnd(): void {
 
       ${pendingNextAsker ? `<section class="panel" role="status"><strong>${t('gameEnd.nextAsker', { name: pendingNextAsker.name })}</strong></section>` : ''}
 
-      ${state.role === 'host' ? `<button class="primary-button next-round" type="button" data-role="new-game">${state.hostIsPlayer ? t('gameEnd.continueNextQuestion') : t('gameEnd.newGame')}</button>` : ''}
+      ${state.role === 'host' ? `<button class="primary-button next-round" type="button" data-role="new-game">${state.hostIsPlayer && !state.questionPoolMode ? t('gameEnd.continueNextQuestion') : t('gameEnd.newGame')}</button>` : ''}
 
       ${state.allowPlayerSuggestions && state.role === 'player' ? renderSuggestQuestionPanel() : ''}
     </main>

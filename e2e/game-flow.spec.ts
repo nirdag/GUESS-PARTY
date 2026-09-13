@@ -81,12 +81,14 @@ async function completeQuestion(host: Client, players: Client[], questionNumber:
     }
     await host.page.locator('[data-role="calculate-score"]').click()
     await expect(host.page.locator('[data-role="next-round"]')).toBeVisible()
+    await expect(host.page.locator('.rounds-left')).toHaveText(`${3 - roundNumber} rounds left to play this question`)
     await checkpoint(host, `question-${questionNumber}-round-${roundNumber}-complete`)
     await host.page.locator('[data-role="next-round"]').click()
   }
 
   await host.page.locator('[data-role="calculate-score"]').click()
   await expect(host.page.locator('[data-role="next-round"]')).toBeVisible()
+  await expect(host.page.locator('.rounds-left')).toHaveText('0 rounds left to play this question')
   await checkpoint(host, `question-${questionNumber}-round-3-complete`)
   await host.page.locator('[data-role="next-round"]').click()
   await expect(host.page.locator('[data-role="new-game"]')).toBeVisible()
