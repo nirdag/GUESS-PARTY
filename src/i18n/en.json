@@ -253,6 +253,7 @@
   "roundEnd.nextRound": "Next round",
   "roundEnd.goToFinalBoard": "Go to final score board",
   "roundEnd.confirmNextRound": "Confirm \u2014 next round",
+  "roundEnd.confirmNextQuestion": "Confirm \u2014 next question",
   "roundEnd.confirmGoToFinalBoard": "Confirm \u2014 go to final board",
   "roundEnd.waitingForConfirmations": "Waiting for {players} to confirm to continue",
   "roundEnd.allConfirmed": "Everyone confirmed \u2014 moving on\u2026",

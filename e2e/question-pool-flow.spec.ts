@@ -165,6 +165,9 @@ test('pre-game question pool gathering, host moderation, player ready confirmati
         await host.page.locator('[data-role="calculate-score"]').click()
       }
       if (await host.page.locator('[data-role="confirm-next-round"]').isVisible()) {
+        if ((await alice.page.locator('.rounds-left').innerText()).startsWith('0')) {
+          await expect(alice.page.locator('[data-role="confirm-next-round"]')).toHaveText('Confirm \u2014 next question')
+        }
         for (const client of [host, alice, bob, carol]) {
           await client.page.locator('[data-role="confirm-next-round"]').click()
         }

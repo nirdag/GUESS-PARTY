@@ -2774,7 +2774,12 @@ function renderRoundEnd(): void {
   const pendingConfirmers = [...confirmerMap.values()].filter((confirmer) => !state.roundEndConfirmedIds.includes(confirmer.id))
   const hasIConfirmed = state.roundEndConfirmedIds.includes(state.currentPlayerId)
   const isLastRound = state.answerRoundNumber >= state.answers.length
-  const confirmLabel = isLastRound ? t('roundEnd.confirmGoToFinalBoard') : t('roundEnd.confirmNextRound')
+  const isLastPoolQuestion = state.questionPoolMode
+    ? (state.currentPoolQuestionIndex ?? 0) >= (state.poolTotalQuestions ?? 0) - 1
+    : false
+  const confirmLabel = state.questionPoolMode
+    ? isLastPoolQuestion ? t('roundEnd.confirmGoToFinalBoard') : t('roundEnd.confirmNextQuestion')
+    : isLastRound ? t('roundEnd.confirmGoToFinalBoard') : t('roundEnd.confirmNextRound')
   const waitingMessage = pendingConfirmers.length > 0
     ? t('roundEnd.waitingForConfirmations', { players: pendingConfirmers.map((confirmer) => `${formatPlayerAvatar(confirmer)} ${confirmer.name}`).join(', ') })
     : t('roundEnd.allConfirmed')

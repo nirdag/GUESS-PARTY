@@ -253,6 +253,7 @@
   "roundEnd.nextRound": "הסבב הבא",
   "roundEnd.goToFinalBoard": "עבור לטבלת הניקוד הסופית",
   "roundEnd.confirmNextRound": "אישור \u2014 הסבב הבא",
+  "roundEnd.confirmNextQuestion": "אישור \u2014 השאלה הבאה",
   "roundEnd.confirmGoToFinalBoard": "אישור \u2014 מעבר לטבלת הניקוד הסופית",
   "roundEnd.waitingForConfirmations": "ממתינים לאישור המשך מ-{players}",
   "roundEnd.allConfirmed": "כולם אישרו \u2014 ממשיכים\u2026",
