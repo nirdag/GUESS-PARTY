@@ -85,6 +85,11 @@ button {
   font-weight: 700;
 }
 
+.identity-role--host-player {
+  background: rgba(74, 222, 128, 0.16);
+  color: #86efac;
+}
+
 .identity-auth-badge {
   padding: 3px 8px;
   border-radius: 999px;
@@ -431,7 +436,7 @@ h1 {
   padding: 12px 18px;
 }
 
-.start-round-button {
+.start-round-button:not(:disabled) {
   animation: start-round-blink 1.2s ease-in-out infinite;
 }
 

@@ -1,8 +1,9 @@
 {
   "common.playingAs": "Playing as",
-  "common.host": "Host",
+  "common.host": "Host only",
+  "common.hostAndPlayer": "Host & Player",
   "common.hostLoggedIn": "Logged in",
-  "common.hostGuest": "Guest host",
+  "common.hostNotLoggedIn": "Not logged in",
   "common.player": "Player",
   "common.guest": "Guest",
   "common.scorePts": "{value} pts",

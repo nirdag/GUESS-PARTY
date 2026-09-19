@@ -1037,10 +1037,11 @@ function closeRoom(): void {
 
 function renderIdentityBanner(): string {
   const displayName = state.playerName || t('common.guest')
-  const roleLabel = state.role === 'host' ? t('common.host') : t('common.player')
+  const isHostAndPlayer = state.role === 'host' && state.hostIsPlayer
+  const roleLabel = state.role === 'host' ? (isHostAndPlayer ? t('common.hostAndPlayer') : t('common.host')) : t('common.player')
   const avatar = state.myAvatar || formatPlayerInitials(displayName)
   const authBadge = state.role === 'host'
-    ? `<span class="identity-auth-badge" title="${state.account ? state.account.email : ''}">${state.account ? t('common.hostLoggedIn') : t('common.hostGuest')}</span>`
+    ? `<span class="identity-auth-badge" title="${state.account ? state.account.email : ''}">${state.account ? t('common.hostLoggedIn') : t('common.hostNotLoggedIn')}</span>`
     : ''
 
   return `
@@ -1048,7 +1049,7 @@ function renderIdentityBanner(): string {
       <span class="avatar">${avatar}</span>
       <span class="identity-label">${t('common.playingAs')}</span>
       <strong>${displayName}</strong>
-      <span class="identity-role">${roleLabel}</span>
+      <span class="identity-role ${isHostAndPlayer ? 'identity-role--host-player' : ''}">${roleLabel}</span>
       ${authBadge}
       <span class="connection-status" data-role="connection-status" role="status" aria-live="polite" hidden></span>
       ${state.role === 'host'
@@ -2084,7 +2085,7 @@ function renderLobby(): void {
       ${state.questionPoolMode
         ? `
           ${state.role === 'host' ? renderHostQuestionModerationPanel() : ''}
-          ${renderQuestionPoolGatheringPanel()}
+          ${state.role !== 'host' || state.hostIsPlayer ? renderQuestionPoolGatheringPanel() : ''}
 
           <section class="panel">
             <div class="section-head">

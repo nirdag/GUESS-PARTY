@@ -1,8 +1,9 @@
 {
   "common.playingAs": "משחק בתור",
-  "common.host": "מנחה",
+  "common.host": "מנחה בלבד",
+  "common.hostAndPlayer": "מנחה ושחקן",
   "common.hostLoggedIn": "מחובר",
-  "common.hostGuest": "מנחה אורח",
+  "common.hostNotLoggedIn": "לא מחובר",
   "common.player": "שחקן",
   "common.guest": "אורח",
   "common.scorePts": "{value} נק'",
