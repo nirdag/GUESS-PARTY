@@ -205,6 +205,9 @@ const state = {
   hostName: '' as string,
   hostAvatar: '' as string,
   roundEndConfirmedIds: [] as string[],
+  // Tracks whether the result overlay/sound already fired for the current round-end instance, since
+  // renderRoundEnd() re-renders on every broadcast (e.g. other players confirming next round).
+  roundEndOverlayShown: false,
   answerRoundNumber: 0,
   question: '',
   questionAuthorName: null as string | null,
@@ -625,6 +628,7 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   }
 
   const isCurrentAsker = state.hostIsPlayer && !state.questionPoolMode && state.currentPlayerId === state.askingPlayerId
+  const previousScreen = state.screen
 
   if (state.phase === 'lobby') {
     state.screen = 'lobby'
@@ -650,6 +654,12 @@ function applyRoomState(serverState: Partial<RoomState>): void {
     state.screen = 'round-end'
   } else if (state.phase === 'game-end') {
     state.screen = 'game-end'
+  }
+
+  // Only replay the celebration overlay/sound the first time we land on round-end, not on every
+  // subsequent re-render caused by other players confirming next round.
+  if (state.screen === 'round-end' && previousScreen !== 'round-end') {
+    state.roundEndOverlayShown = false
   }
 
   renderApp()
@@ -2762,6 +2772,11 @@ function renderRoundEnd(): void {
     : myResult
       ? myResult.correct ? 'success' : 'fail'
       : isEligibleToGuess ? 'no-guess' : null
+  // Only fire the overlay/sound once per round-end instance, not on every re-render triggered by others confirming.
+  const shouldShowOverlay = Boolean(overlayKind) && !state.roundEndOverlayShown
+  if (shouldShowOverlay) {
+    state.roundEndOverlayShown = true
+  }
 
   // Confirmers required to advance: host + every currently-connected player, deduped (host may already be a player).
   const confirmerMap = new Map<string, Player>()
@@ -2786,7 +2801,7 @@ function renderRoundEnd(): void {
 
   root.innerHTML = `
     <main class="shell">
-      ${overlayKind ? renderResultCelebrationOverlay(overlayKind, myResult?.points) : ''}
+      ${shouldShowOverlay ? renderResultCelebrationOverlay(overlayKind as ResultOverlayKind, myResult?.points) : ''}
       ${renderIdentityBanner()}
       <section class="panel summary-panel">
         <p class="eyebrow">${t('roundEnd.complete')}</p>
@@ -2886,8 +2901,8 @@ function renderRoundEnd(): void {
     </main>
   `
 
-  // Trigger result audio only for players who submitted a guess.
-  if (myResult) {
+  // Trigger result audio only the first time the overlay is shown for this round-end.
+  if (shouldShowOverlay && myResult) {
     playCelebrationSound(myResult.correct)
   }
 

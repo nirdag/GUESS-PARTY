@@ -159,7 +159,40 @@ test('pre-game question pool gathering, host moderation, player ready confirmati
     // Host locks answers for Question 1
     await host.page.locator('[data-role="lock-answers"]').click()
 
-    // Play through all guess rounds for Question 1 until Question 2 answering screen appears
+    // Round 1 guessing: verify the result celebration overlay fires exactly once, even though other
+    // participants keep re-triggering a room-state broadcast by confirming before this player does.
+    const answerTextR1 = await alice.page.locator('.answer-reveal strong').innerText()
+    const answersR1 = new Map([
+      [alice.name, 'Alice answer for Q1'],
+      [bob.name, 'Bob answer for Q1'],
+      [carol.name, 'Carol answer for Q1'],
+    ])
+    const answerAuthorR1 = [...answersR1].find(([, answer]) => answer === answerTextR1)?.[0]
+    expect(answerAuthorR1, `Unknown answer displayed: ${answerTextR1}`).toBeTruthy()
+
+    const authorClientR1 = [alice, bob, carol].find((player) => player.name === answerAuthorR1)!
+    const [firstGuesser, secondGuesser] = [alice, bob, carol].filter((player) => player.name !== answerAuthorR1)
+
+    for (const guesser of [firstGuesser, secondGuesser]) {
+      await guesser.page.locator(`[data-guess-id]:has-text("${answerAuthorR1}")`).click()
+    }
+
+    await host.page.locator('[data-role="calculate-score"]').click()
+    await expect(firstGuesser.page.locator('.celebration-overlay')).toBeVisible()
+    await checkpoint(firstGuesser, 'round1-celebration-overlay-shown')
+
+    // Everyone except firstGuesser confirms next round; each confirmation re-broadcasts room state.
+    for (const client of [host, authorClientR1, secondGuesser]) {
+      await client.page.locator('[data-role="confirm-next-round"]').click()
+    }
+
+    // firstGuesser hasn't confirmed yet, so still on round-end — overlay must not have re-appeared.
+    await expect(firstGuesser.page.locator('[data-role="confirm-next-round"]')).toBeVisible()
+    await expect(firstGuesser.page.locator('.celebration-overlay')).toHaveCount(0)
+
+    await firstGuesser.page.locator('[data-role="confirm-next-round"]').click()
+
+    // Play through remaining guess rounds for Question 1 until Question 2 answering screen appears
     while (!(await alice.page.locator('#player-answer').isVisible())) {
       if (await host.page.locator('[data-role="calculate-score"]').isVisible()) {
         await host.page.locator('[data-role="calculate-score"]').click()
