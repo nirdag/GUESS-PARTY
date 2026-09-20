@@ -4,6 +4,7 @@ import {
   findPlayerById,
   addPlayerToRoom,
   leaveRoom,
+  kickPlayer,
   closeRoom,
   calculateRoundScores,
   evaluateGuess,
@@ -870,6 +871,122 @@ describe('HIGH: Leave Room', () => {
 
     expect(removed).toBeNull();
     expect(room.players).toHaveLength(1);
+  });
+});
+
+describe('HIGH: Kick Player', () => {
+  function createTestSocket() {
+    return {
+      readyState: 1,
+      sent: [],
+      send(message) {
+        this.sent.push(JSON.parse(message));
+      },
+    };
+  }
+
+  it('removes the player, detaches their socket, and notifies them they were kicked', () => {
+    const room = createTestRoom();
+    const player = addPlayerToRoom(room, 'Alice');
+    const socket = createTestSocket();
+    socket.playerId = player.id;
+    room.clients.add(socket);
+
+    const removed = kickPlayer(room, player.id);
+
+    expect(removed.id).toBe(player.id);
+    expect(room.players).toHaveLength(0);
+    expect(room.clients.has(socket)).toBe(false);
+    expect(socket.sent).toEqual([{ type: 'kicked' }]);
+  });
+
+  it('returns null for an unknown player id', () => {
+    const room = createTestRoom();
+
+    expect(kickPlayer(room, 'not-a-real-id')).toBeNull();
+  });
+
+  it('cleans up the kicked player pending pool questions while still in lobby', () => {
+    const room = createTestRoom();
+    room.questionPoolMode = true;
+    room.poolQuestions = [];
+    const player = addPlayerToRoom(room, 'Alice');
+    addPoolQuestion(room, player.id, player.name, 'Would you rather question that is long enough?');
+    expect(room.poolQuestions).toHaveLength(1);
+
+    kickPlayer(room, player.id);
+
+    expect(room.poolQuestions).toHaveLength(0);
+  });
+
+  it('lets a kicked player rejoin under the same name afterward', () => {
+    const room = createTestRoom();
+    const player = addPlayerToRoom(room, 'Alice');
+    kickPlayer(room, player.id);
+
+    const rejoined = addPlayerToRoom(room, 'Alice');
+
+    expect(rejoined).not.toBeNull();
+    expect(rejoined.id).not.toBe(player.id);
+  });
+
+  it('treats kicking the current answer owner mid-guessing like a timeout: scores existing guesses and proceeds to round-end', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account' });
+    const alice = addPlayerToRoom(room, 'Alice');
+    const bob = addPlayerToRoom(room, 'Bob');
+    const carol = addPlayerToRoom(room, 'Carol');
+    const dave = addPlayerToRoom(room, 'Dave');
+    startRound(room, 'What is the best pizza topping?');
+    submitAnswer(room, alice.id, 'Pepperoni');
+    submitAnswer(room, bob.id, 'Mushroom');
+    submitAnswer(room, carol.id, 'Olives');
+    submitAnswer(room, dave.id, 'Pineapple');
+    lockAnswers(room);
+    expect(room.phase).toBe('guessing');
+
+    const answerOwnerId = room.currentAnswer.playerId;
+    const otherPlayers = [alice, bob, carol, dave].filter((player) => player.id !== answerOwnerId);
+    evaluateGuess(room, otherPlayers[0].id, otherPlayers[1].id);
+
+    const removed = kickPlayer(room, answerOwnerId);
+
+    expect(removed.id).toBe(answerOwnerId);
+    expect(room.phase).toBe('round-end');
+    expect(room.roundResults.length).toBeGreaterThan(0);
+  });
+
+  it('reassigns asker duty to the next score leader when the kicked player is the current asker', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', addSelfAsPlayer: true });
+    const alice = addPlayerToRoom(room, 'Alice');
+    const bob = addPlayerToRoom(room, 'Bob');
+    const carol = addPlayerToRoom(room, 'Carol');
+    const dave = addPlayerToRoom(room, 'Dave');
+    carol.score = 200;
+    room.phase = 'asking';
+    room.askingPlayerId = alice.id;
+    room.lastAskerId = alice.id;
+
+    const removed = kickPlayer(room, alice.id);
+
+    expect(removed.id).toBe(alice.id);
+    expect(room.phase).toBe('asking');
+    expect(room.askingPlayerId).toBe(carol.id);
+    expect(room.lastAskerId).toBe(carol.id);
+    expect(bob).toBeTruthy();
+    expect(dave).toBeTruthy();
+  });
+
+  it('ends the game when kicking the current asker leaves too few players to keep rotating', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', addSelfAsPlayer: true });
+    const alice = addPlayerToRoom(room, 'Alice');
+    addPlayerToRoom(room, 'Bob');
+    room.phase = 'asking';
+    room.askingPlayerId = alice.id;
+
+    const removed = kickPlayer(room, alice.id);
+
+    expect(removed.id).toBe(alice.id);
+    expect(room.phase).toBe('game-end');
   });
 });
 

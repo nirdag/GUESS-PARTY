@@ -82,10 +82,20 @@ test('pre-game question pool gathering, host moderation, player ready confirmati
     const aliceQuestion = 'What is your absolute favorite hobby on weekends?'
     const bobQuestion = 'What is the strangest pizza topping you ever tried?'
     const carolBadQuestion = 'Inappropriate question that host will discard?'
+    const aliceSecondQuestion = 'What is the best board game for a rainy afternoon?'
+    const aliceThirdQuestion = 'Which fictional world would you visit for one day?'
 
     // Alice submits a question
     await alice.page.locator('#pool-question-input').fill(aliceQuestion)
     await alice.page.locator('#pool-question-form').getByRole('button', { name: 'Submit question' }).click()
+
+    await alice.page.locator('#pool-question-input').fill(aliceSecondQuestion)
+    await alice.page.locator('#pool-question-form').getByRole('button', { name: 'Submit question' }).click()
+
+    await alice.page.locator('#pool-question-input').fill(aliceThirdQuestion)
+    await alice.page.locator('#pool-question-form').getByRole('button', { name: 'Submit question' }).click()
+    await expect(alice.page.locator('[data-role="toggle-pool-ready"]')).toHaveText('Add or edit questions')
+    await expect(alice.page.locator('body')).toContainText('Ready to play')
 
     // Bob submits a question
     await bob.page.locator('#pool-question-input').fill(bobQuestion)
@@ -112,8 +122,19 @@ test('pre-game question pool gathering, host moderation, player ready confirmati
 
     // Host discards Carol's question
     const discardButtons = host.page.locator('[data-role="discard-pool-question"]')
-    await expect(discardButtons).toHaveCount(3)
-    await discardButtons.nth(2).click()
+    await expect(discardButtons).toHaveCount(5)
+    for (const question of [aliceSecondQuestion, aliceThirdQuestion]) {
+      await host.page
+        .locator('.host-moderation-panel .result-row')
+        .filter({ hasText: question })
+        .locator('[data-role="discard-pool-question"]')
+        .click()
+    }
+    await host.page
+      .locator('.host-moderation-panel .result-row')
+      .filter({ hasText: carolBadQuestion })
+      .locator('[data-role="discard-pool-question"]')
+      .click()
 
     // Question disappears from host and from Carol
     await expect(host.page.locator('.host-moderation-panel')).not.toContainText(carolBadQuestion)
@@ -123,9 +144,6 @@ test('pre-game question pool gathering, host moderation, player ready confirmati
     await expect(host.page.locator('[data-role="start-round"]')).toBeDisabled()
 
     // Players confirm ready
-    await alice.page.locator('[data-role="toggle-pool-ready"]').click()
-    await expect(alice.page.locator('body')).toContainText('Ready to play')
-
     await bob.page.locator('[data-role="toggle-pool-ready"]').click()
     await expect(bob.page.locator('body')).toContainText('Ready to play')
 

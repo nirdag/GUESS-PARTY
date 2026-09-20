@@ -143,6 +143,20 @@ root.addEventListener('click', (event) => {
     return
   }
 
+  if (target.closest('[data-role="toggle-manage-players"]')) {
+    state.showManagePlayersPanel = !state.showManagePlayersPanel
+    renderApp()
+    return
+  }
+
+  const kickButton = target.closest<HTMLElement>('[data-role="kick-player"]')
+  if (kickButton) {
+    const playerId = kickButton.dataset.playerId ?? ''
+    const playerName = kickButton.dataset.playerName ?? ''
+    kickPlayer(playerId, playerName)
+    return
+  }
+
   const avatarButton = target.closest<HTMLElement>('[data-avatar]')
   if (avatarButton) {
     state.selectedAvatar = avatarButton.dataset.avatar ?? state.selectedAvatar
@@ -243,6 +257,7 @@ const state = {
   myPoolQuestions: [] as PoolQuestion[],
   poolQuestionDraft: '',
   isPlayerReady: false,
+  poolMaxReadyConfirmationSent: false,
   poolQuestionCount: 0,
   poolTotalQuestions: 0,
   currentPoolQuestionIndex: 0,
@@ -259,6 +274,7 @@ const state = {
   galleryFilter: 'all' as 'all' | 'public' | 'private',
   myGalleryError: '',
   showRoomSharingPanel: false,
+  showManagePlayersPanel: false,
   roomCodePrefilledFromUrl: false,
   finalMatchup: null as FinalMatchup | null,
 }
@@ -596,9 +612,6 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   state.canStartGame = serverState.canStartGame ?? state.canStartGame
   state.hasSubmittedAnswer = state.answers.some((answer) => answer.playerId === state.currentPlayerId)
 
-  const myPlayerObj = state.players.find((player) => player.id === state.currentPlayerId)
-  state.isPlayerReady = Boolean(myPlayerObj?.ready)
-
   if (serverState.askingPlayerId !== undefined && serverState.askingPlayerId !== state.askingPlayerId) {
     state.askingPlayerId = serverState.askingPlayerId
     state.askerOverlayConfirmed = false
@@ -625,6 +638,18 @@ function applyRoomState(serverState: Partial<RoomState>): void {
     const matchingName = state.playerName.trim().toLowerCase()
     const matchedPlayer = state.players.find((player) => player.name.toLowerCase() === matchingName)
     state.currentPlayerId = matchedPlayer?.id ?? state.players[0]?.id ?? state.currentPlayerId
+  }
+
+  const myPlayerObj = state.players.find((player) => player.id === state.currentPlayerId)
+  state.isPlayerReady = Boolean(myPlayerObj?.ready)
+
+  if (state.myPoolQuestions.length < 3) {
+    state.poolMaxReadyConfirmationSent = false
+  }
+
+  if (state.myPoolQuestions.length >= 3 && !state.isPlayerReady && !state.poolMaxReadyConfirmationSent) {
+    state.poolMaxReadyConfirmationSent = true
+    confirmNoMoreQuestions(true)
   }
 
   const isCurrentAsker = state.hostIsPlayer && !state.questionPoolMode && state.currentPlayerId === state.askingPlayerId
@@ -1045,6 +1070,14 @@ function closeRoom(): void {
   sendSocketMessage('close-room')
 }
 
+function kickPlayer(playerId: string, playerName: string): void {
+  if (!playerId || !window.confirm(t('prompts.confirmKickPlayer', { name: playerName }))) {
+    return
+  }
+
+  sendSocketMessage('kick-player', { playerId })
+}
+
 function renderIdentityBanner(): string {
   const displayName = state.playerName || t('common.guest')
   const isHostAndPlayer = state.role === 'host' && state.hostIsPlayer
@@ -1063,11 +1096,46 @@ function renderIdentityBanner(): string {
       ${authBadge}
       <span class="connection-status" data-role="connection-status" role="status" aria-live="polite" hidden></span>
       ${state.role === 'host'
+        ? `<button class="ghost-button" type="button" data-role="toggle-manage-players">${t('common.managePlayers')}</button>`
+        : ''}
+      ${state.role === 'host'
         ? `<button class="quit-button" type="button" data-role="close-room">${t('common.closeRoom')}</button>`
         : `<button class="quit-button" type="button" data-role="quit-room">${t('common.quit')}</button>`}
     </div>
+    ${state.role === 'host' && state.showManagePlayersPanel ? renderManagePlayersPanel() : ''}
   `
 }
+
+// Host-only roster with per-player kick buttons; excludes the host's own row in host-as-player rooms.
+function renderManagePlayersPanel(): string {
+  const kickablePlayers = state.players.filter((player) => player.id !== state.hostId)
+
+  return `
+    <div class="panel manage-players-panel">
+      <div class="section-head">
+        <h2>${t('common.managePlayers')}</h2>
+      </div>
+      ${kickablePlayers.length > 0
+        ? `
+          <div class="result-list">
+            ${kickablePlayers
+              .map(
+                (player) => `
+                  <div class="result-row">
+                    <span>${formatPlayerAvatar(player)} ${player.name}${player.connected === false ? ` <small>(${t('common.playerDisconnectedBadge')})</small>` : ''}</span>
+                    <button type="button" class="ghost-button" data-role="kick-player" data-player-id="${player.id}" data-player-name="${player.name}">${t('common.kickPlayer')}</button>
+                  </div>
+                `,
+              )
+              .join('')}
+          </div>
+          `
+        : `<div class="result-row"><span>${t('lobby.hostModerationEmpty')}</span></div>`}
+    </div>
+  `
+}
+
+
 
 function appendAccountBadge(): void {
   if (!state.account) {
@@ -1900,6 +1968,13 @@ function wireSuggestionPanels(): void {
 function renderQuestionPoolGatheringPanel(): string {
   const myCount = state.myPoolQuestions.length
   const isMaxReached = myCount >= 3
+
+  if (isMaxReached && !state.isPlayerReady && !state.poolMaxReadyConfirmationSent) {
+    state.poolMaxReadyConfirmationSent = true
+    state.isPlayerReady = true
+    queueMicrotask(() => confirmNoMoreQuestions(true))
+  }
+
   const isReady = state.isPlayerReady
 
   return `
@@ -3123,6 +3198,25 @@ function connectSocket(): void {
 
       if (payload.type === 'player-left') {
         window.alert(t('prompts.playerLeft', { name: payload.playerName }))
+        return
+      }
+
+      if (payload.type === 'player-kicked') {
+        window.alert(t('prompts.playerKicked', { name: payload.playerName }))
+        return
+      }
+
+      if (payload.type === 'kicked') {
+        clearStoredRoomSession()
+        shouldRestoreRoomSession = false
+        state.screen = 'welcome'
+        state.roomCode = ''
+        state.playerName = ''
+        state.currentPlayerId = ''
+        state.players = []
+        setLanguage('en')
+        window.alert(t('prompts.kickedFromRoom'))
+        renderApp()
         return
       }
 

@@ -670,6 +670,48 @@ function leaveRoom(room, playerId) {
   return removedPlayer;
 }
 
+// Host-initiated removal of an unresponsive player, distinct from a voluntary leave-room.
+function kickPlayer(room, playerId) {
+  const player = findPlayerById(room, playerId);
+  if (!player) {
+    return null;
+  }
+
+  const wasCurrentAsker = room.hostIsPlayer && !room.questionPoolMode && room.phase === 'asking' && room.askingPlayerId === playerId;
+  const wasCurrentAnswerOwner = room.phase === 'guessing' && room.currentAnswer && room.currentAnswer.playerId === playerId;
+
+  // Capture sockets before leaveRoom() detaches them, so the kicked client can still be notified.
+  const targetClients = [...room.clients].filter((client) => client.playerId === playerId);
+
+  const removedPlayer = leaveRoom(room, playerId);
+  if (!removedPlayer) {
+    return null;
+  }
+
+  targetClients.forEach((client) => {
+    if (client.readyState === 1) {
+      client.send(JSON.stringify({ type: 'kicked' }));
+    }
+  });
+
+  if (wasCurrentAnswerOwner) {
+    // Same as a guess-timeout: score whatever guesses already came in, then proceed to round-end.
+    calculateRoundScores(room);
+  } else if (wasCurrentAsker) {
+    if (room.players.length >= 4) {
+      const nextAskerId = pickNextAsker(room);
+      room.askingPlayerId = nextAskerId;
+      room.lastAskerId = nextAskerId;
+      room.pendingNextAskerId = null;
+    } else {
+      room.phase = 'game-end';
+      room.timeLeft = 0;
+    }
+  }
+
+  return removedPlayer;
+}
+
 function closeRoom(room) {
   if (!room || rooms.get(room.code) !== room) {
     return false;
@@ -1466,6 +1508,30 @@ wss.on('connection', (socket, request) => {
           break;
         }
 
+        case 'kick-player': {
+          if (!room || room.hostId !== socket.playerId) {
+            return;
+          }
+
+          if (!message.playerId || message.playerId === room.hostId) {
+            return;
+          }
+
+          const kickedPlayer = kickPlayer(room, message.playerId);
+          if (!kickedPlayer) {
+            return;
+          }
+
+          logger.event('player-kicked', { roomCode: room.code, playerId: kickedPlayer.id });
+          broadcastRoom(room);
+          room.clients.forEach((client) => {
+            if (client.readyState === 1) {
+              client.send(JSON.stringify({ type: 'player-kicked', playerName: kickedPlayer.name }));
+            }
+          });
+          break;
+        }
+
         case 'start-round': {
           // In host-as-player rooms without questionPoolMode, the current asker starts the round.
           const canStartRound = room && (
@@ -1746,6 +1812,7 @@ export {
   findPlayerById,
   addPlayerToRoom,
   leaveRoom,
+  kickPlayer,
   closeRoom,
   calculateRoundScores,
   evaluateGuess,
