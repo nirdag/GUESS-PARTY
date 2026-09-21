@@ -3,7 +3,26 @@ import QRCode from 'qrcode'
 import { type LanguageCode, getLanguage, languages, setLanguage, t } from './i18n'
 
 type Role = 'host' | 'player'
-type Screen = 'welcome' | 'membership' | 'host-setup' | 'join-setup' | 'lobby' | 'host-managing' | 'player-answering' | 'player-guessing' | 'round-end' | 'game-end' | 'admin-login' | 'admin-gallery' | 'ask-question' | 'waiting-for-question'
+type Screen = 'welcome' | 'membership' | 'host-setup' | 'join-setup' | 'lobby' | 'host-managing' | 'player-answering' | 'player-guessing' | 'matching-board' | 'round-end' | 'game-end' | 'admin-login' | 'admin-gallery' | 'ask-question' | 'waiting-for-question'
+
+type GuessFlowMode = 'sequential' | 'allAtOnce'
+
+type MatchingSlot = {
+  slotId: string
+  text: string
+  authorId?: string
+}
+
+type MyMatch = {
+  slotId: string
+  guessedId: string
+  guessedName: string
+}
+
+type MatchingProgressEntry = {
+  playerId: string
+  done: boolean
+}
 
 type Account = {
   id: string
@@ -77,7 +96,7 @@ type FinalMatchup = {
 
 type RoomState = {
   code: string
-  phase: 'lobby' | 'asking' | 'answer-collection' | 'guessing' | 'round-end' | 'game-end'
+  phase: 'lobby' | 'asking' | 'answer-collection' | 'guessing' | 'matching' | 'round-end' | 'game-end'
   answerRoundNumber: number
   question: string
   questionAuthorName: string | null
@@ -113,6 +132,12 @@ type RoomState = {
   allPlayersReady?: boolean
   canStartGame?: boolean
   roundEndConfirmedIds?: string[]
+  guessFlowMode?: GuessFlowMode
+  matchingBoard?: MatchingSlot[]
+  matchingAuthorIds?: string[]
+  myMatches?: MyMatch[]
+  matchingProgress?: MatchingProgressEntry[]
+  matchingConfirmed?: boolean
 }
 
 const app = document.querySelector<HTMLDivElement>('#app')
@@ -277,6 +302,14 @@ const state = {
   showManagePlayersPanel: false,
   roomCodePrefilledFromUrl: false,
   finalMatchup: null as FinalMatchup | null,
+  guessFlowMode: 'sequential' as GuessFlowMode,
+  matchingBoard: [] as MatchingSlot[],
+  matchingAuthorIds: [] as string[],
+  myMatches: [] as MyMatch[],
+  matchingProgress: [] as MatchingProgressEntry[],
+  matchingConfirmed: false,
+  // Tap-to-place fallback: the name token currently "picked up", awaiting a tap on a slot.
+  matchingSelectedTokenId: null as string | null,
 }
 
 let queuedAction: (() => void) | null = null
@@ -610,6 +643,15 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   state.currentPoolQuestionIndex = serverState.currentPoolQuestionIndex ?? state.currentPoolQuestionIndex
   state.allPlayersReady = serverState.allPlayersReady ?? state.allPlayersReady
   state.canStartGame = serverState.canStartGame ?? state.canStartGame
+  state.guessFlowMode = serverState.guessFlowMode ?? state.guessFlowMode
+  state.matchingBoard = serverState.matchingBoard ?? state.matchingBoard
+  state.matchingAuthorIds = serverState.matchingAuthorIds ?? state.matchingAuthorIds
+  state.myMatches = serverState.myMatches ?? state.myMatches
+  state.matchingProgress = serverState.matchingProgress ?? state.matchingProgress
+  state.matchingConfirmed = serverState.matchingConfirmed ?? state.matchingConfirmed
+  if (state.matchingConfirmed) {
+    state.matchingSelectedTokenId = null
+  }
   state.hasSubmittedAnswer = state.answers.some((answer) => answer.playerId === state.currentPlayerId)
 
   if (serverState.askingPlayerId !== undefined && serverState.askingPlayerId !== state.askingPlayerId) {
@@ -675,6 +717,8 @@ function applyRoomState(serverState: Partial<RoomState>): void {
         ? (isCurrentAsker ? 'host-managing' : 'player-guessing')
         : (state.role === 'host' ? 'host-managing' : 'player-guessing')
     }
+  } else if (state.phase === 'matching') {
+    state.screen = 'matching-board'
   } else if (state.phase === 'round-end') {
     state.screen = 'round-end'
   } else if (state.phase === 'game-end') {
@@ -685,6 +729,11 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   // subsequent re-render caused by other players confirming next round.
   if (state.screen === 'round-end' && previousScreen !== 'round-end') {
     state.roundEndOverlayShown = false
+  }
+
+  // Only clear the tap-to-place selection when freshly entering the board, not on every broadcast from other players.
+  if (state.screen === 'matching-board' && previousScreen !== 'matching-board') {
+    state.matchingSelectedTokenId = null
   }
 
   renderApp()
@@ -799,7 +848,7 @@ function renderGuessIntroOverlay(): string {
   `
 }
 
-function createRoomSession(name: string, language: LanguageCode, avatar: string, guessTimeoutSeconds: number, addSelfAsPlayer: boolean, allowPlayerSuggestions: boolean, questionPoolMode: boolean = false): void {
+function createRoomSession(name: string, language: LanguageCode, avatar: string, guessTimeoutSeconds: number, addSelfAsPlayer: boolean, allowPlayerSuggestions: boolean, questionPoolMode: boolean = false, guessFlowMode: GuessFlowMode = 'sequential'): void {
   const nextName = name.trim() || t('prompts.defaultHostName')
   state.playerName = nextName
   state.role = 'host'
@@ -808,6 +857,7 @@ function createRoomSession(name: string, language: LanguageCode, avatar: string,
   state.guessTimeoutSeconds = guessTimeoutSeconds
   state.addSelfAsPlayer = addSelfAsPlayer
   state.questionPoolMode = questionPoolMode
+  state.guessFlowMode = guessFlowMode
   // Mutually exclusive with host-as-player or question pool mode:
   state.allowPlayerSuggestions = (addSelfAsPlayer || questionPoolMode) ? false : allowPlayerSuggestions
   setLanguage(language)
@@ -816,12 +866,12 @@ function createRoomSession(name: string, language: LanguageCode, avatar: string,
   state.screen = 'lobby'
 
   if (socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds, addSelfAsPlayer, allowPlayerSuggestions: state.allowPlayerSuggestions, questionPoolMode }))
+    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds, addSelfAsPlayer, allowPlayerSuggestions: state.allowPlayerSuggestions, questionPoolMode, guessFlowMode }))
     return
   }
 
   queuedAction = () => {
-    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds, addSelfAsPlayer, allowPlayerSuggestions: state.allowPlayerSuggestions, questionPoolMode }))
+    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds, addSelfAsPlayer, allowPlayerSuggestions: state.allowPlayerSuggestions, questionPoolMode, guessFlowMode }))
   }
 
   renderApp()
@@ -1022,6 +1072,39 @@ function lockAnswers(): void {
   sendSocketMessage('lock-answers')
 }
 
+function placeMatchToken(slotId: string, guessedId: string): void {
+  if (!state.roomCode || !slotId || !guessedId || state.matchingConfirmed) {
+    return
+  }
+
+  if (state.myMatches.some((match) => match.slotId === slotId || match.guessedId === guessedId)) {
+    return
+  }
+
+  const guessedPlayer = state.players.find((player) => player.id === guessedId)
+  state.myMatches = [...state.myMatches, { slotId, guessedId, guessedName: guessedPlayer?.name ?? '' }]
+  state.matchingSelectedTokenId = null
+  sendSocketMessage('submit-match', { slotId, guessedId })
+  renderApp()
+}
+
+function removeMatchToken(slotId: string): void {
+  if (!state.roomCode || !slotId || state.matchingConfirmed) {
+    return
+  }
+
+  state.matchingSelectedTokenId = null
+  sendSocketMessage('remove-match', { slotId })
+}
+
+function forceCompleteMatching(): void {
+  if (!state.roomCode) {
+    return
+  }
+
+  sendSocketMessage('force-complete-matching')
+}
+
 function calculateScores(): void {
   if (!state.roomCode) {
     return
@@ -1082,6 +1165,9 @@ function renderIdentityBanner(): string {
   const displayName = state.playerName || t('common.guest')
   const isHostAndPlayer = state.role === 'host' && state.hostIsPlayer
   const roleLabel = state.role === 'host' ? (isHostAndPlayer ? t('common.hostAndPlayer') : t('common.host')) : t('common.player')
+  const guessFlowBadge = state.role === 'host'
+    ? `<span class="identity-flow-badge">${state.guessFlowMode === 'allAtOnce' ? t('common.guessFlowAllAtOnce') : t('common.guessFlowSequential')}</span>`
+    : ''
   const avatar = state.myAvatar || formatPlayerInitials(displayName)
   const authBadge = state.role === 'host'
     ? `<span class="identity-auth-badge" title="${state.account ? state.account.email : ''}">${state.account ? t('common.hostLoggedIn') : t('common.hostNotLoggedIn')}</span>`
@@ -1093,6 +1179,7 @@ function renderIdentityBanner(): string {
       <span class="identity-label">${t('common.playingAs')}</span>
       <strong>${displayName}</strong>
       <span class="identity-role ${isHostAndPlayer ? 'identity-role--host-player' : ''}">${roleLabel}</span>
+      ${guessFlowBadge}
       ${authBadge}
       <span class="connection-status" data-role="connection-status" role="status" aria-live="polite" hidden></span>
       ${state.role === 'host'
@@ -1272,6 +1359,18 @@ function renderHostSetup(): void {
             <span>${t('hostSetup.questionPoolLabel')}</span>
           </label>
           <small class="field-hint">${t('hostSetup.questionPoolHint')}</small>
+          <label>${t('hostSetup.guessFlowLabel')}</label>
+          <div class="radio-group" role="radiogroup" aria-label="${t('hostSetup.guessFlowLabel')}">
+            <label class="radio-field">
+              <input type="radio" name="host-setup-guess-flow" value="sequential" ${state.guessFlowMode !== 'allAtOnce' ? 'checked' : ''} />
+              <span>${t('hostSetup.guessFlowSequentialLabel')}</span>
+            </label>
+            <label class="radio-field">
+              <input type="radio" name="host-setup-guess-flow" value="allAtOnce" ${state.guessFlowMode === 'allAtOnce' ? 'checked' : ''} />
+              <span>${t('hostSetup.guessFlowAllAtOnceLabel')}</span>
+            </label>
+          </div>
+          <small class="field-hint">${t('hostSetup.guessFlowHint')}</small>
           <button class="primary-button" type="submit">${t('hostSetup.submit')}</button>
         </form>
 
@@ -1326,6 +1425,13 @@ function renderHostSetup(): void {
     state.language = (event.target as HTMLSelectElement).value as LanguageCode
   })
 
+  // Track the pick so a later re-render (e.g. picking an avatar) doesn't revert the radio to sequential.
+  root.querySelectorAll<HTMLInputElement>('input[name="host-setup-guess-flow"]').forEach((radio) => {
+    radio.addEventListener('change', (event) => {
+      state.guessFlowMode = (event.target as HTMLInputElement).value as GuessFlowMode
+    })
+  })
+
   const updateGuessTime = (change: number) => {
     state.guessTimeoutSeconds = Math.min(60, Math.max(20, state.guessTimeoutSeconds + change))
     const output = root.querySelector<HTMLOutputElement>('#host-setup-timeout-counter')
@@ -1353,13 +1459,24 @@ function renderHostSetup(): void {
     if ((addSelfCheckbox?.checked || questionPoolCheckbox?.checked) && allowSuggestionsCheckbox) {
       allowSuggestionsCheckbox.checked = false
       allowSuggestionsCheckbox.disabled = true
+      state.allowPlayerSuggestions = false
     } else if (allowSuggestionsCheckbox) {
       allowSuggestionsCheckbox.disabled = false
     }
   }
 
-  addSelfCheckbox?.addEventListener('change', updateCheckboxStates)
-  questionPoolCheckbox?.addEventListener('change', updateCheckboxStates)
+  // Track every pick immediately so a later re-render (e.g. picking an avatar) doesn't silently revert it.
+  addSelfCheckbox?.addEventListener('change', () => {
+    state.addSelfAsPlayer = addSelfCheckbox.checked
+    updateCheckboxStates()
+  })
+  questionPoolCheckbox?.addEventListener('change', () => {
+    state.questionPoolMode = questionPoolCheckbox.checked
+    updateCheckboxStates()
+  })
+  allowSuggestionsCheckbox?.addEventListener('change', () => {
+    state.allowPlayerSuggestions = allowSuggestionsCheckbox.checked
+  })
 
   root.querySelector<HTMLFormElement>('#host-setup-form')?.addEventListener('submit', (event) => {
     event.preventDefault()
@@ -1368,7 +1485,8 @@ function renderHostSetup(): void {
     const addSelfAsPlayer = root.querySelector<HTMLInputElement>('#host-setup-add-self')?.checked ?? false
     const allowPlayerSuggestions = root.querySelector<HTMLInputElement>('#host-setup-allow-suggestions')?.checked ?? false
     const questionPoolMode = root.querySelector<HTMLInputElement>('#host-setup-question-pool')?.checked ?? false
-    createRoomSession(name, language, state.selectedAvatar, state.guessTimeoutSeconds, addSelfAsPlayer, allowPlayerSuggestions, questionPoolMode)
+    const guessFlowMode = (root.querySelector<HTMLInputElement>('input[name="host-setup-guess-flow"]:checked')?.value ?? 'sequential') as GuessFlowMode
+    createRoomSession(name, language, state.selectedAvatar, state.guessTimeoutSeconds, addSelfAsPlayer, allowPlayerSuggestions, questionPoolMode, guessFlowMode)
   })
 }
 
@@ -2835,6 +2953,199 @@ function renderPlayerGuessing(): void {
   })
 }
 
+// Drag/tap state for the all-at-once matching board - module scope since it spans multiple pointer events across re-renders.
+let matchingDragGhost: HTMLElement | null = null
+let matchingDragState: { tokenId: string; startX: number; startY: number; moved: boolean; pointerId: number } | null = null
+
+function renderMatchingBoard(): void {
+  const myUsedTokenIds = new Set(state.myMatches.map((match) => match.guessedId))
+  const canEditMatches = state.matchingProgress.some((entry) => entry.playerId === state.currentPlayerId) && !state.matchingConfirmed
+  const isDoneGuessing = state.matchingConfirmed
+  const availableTokens = state.matchingAuthorIds
+    .map((id) => state.players.find((player) => player.id === id))
+    .filter((player): player is Player => Boolean(player) && !myUsedTokenIds.has(player!.id) && canEditMatches)
+
+  root.innerHTML = `
+    <main class="shell">
+      ${renderIdentityBanner()}
+      <section class="panel round-panel">
+        <div class="round-header">
+          <div>
+            <p class="eyebrow">${t('hostManaging.round', { number: state.answerRoundNumber })}</p>
+            <h1>${state.question}</h1>
+            ${renderQuestionAskerTag()}
+          </div>
+          <div class="timer-box">${t('matchingBoard.untimedLabel')}</div>
+        </div>
+
+        <div class="turn-box">
+          <p>${t('matchingBoard.instructionsEyebrow')}</p>
+          <h2>${t('matchingBoard.instructions')}</h2>
+        </div>
+
+        <div class="matching-board">
+          <div class="matching-slots">
+          ${state.matchingBoard
+            .map((slot) => {
+              const mine = state.myMatches.find((match) => match.slotId === slot.slotId)
+              const placedPlayer = mine ? state.players.find((player) => player.id === mine.guessedId) : undefined
+              return `
+                <div class="matching-slot ${mine ? 'filled' : ''}" data-role="matching-slot" data-slot-id="${slot.slotId}">
+                  <p class="matching-slot-text">"${slot.text}"</p>
+                  <div class="matching-slot-target">
+                    ${mine
+                      ? `
+                        <span class="matching-token placed">${formatPlayerAvatar(placedPlayer)} ${mine.guessedName}</span>
+                        ${canEditMatches ? `<button class="matching-remove-match" type="button" data-role="remove-match" data-slot-id="${slot.slotId}" aria-label="${t('matchingBoard.removeMatch')}" title="${t('matchingBoard.removeMatch')}">X</button>` : ''}
+                      `
+                      : `<span class="matching-slot-placeholder">${t('matchingBoard.dropHere')}</span>`}
+                  </div>
+                </div>
+              `
+            })
+            .join('')}
+          </div>
+
+          <div class="matching-token-pool" data-role="matching-token-pool">
+          ${availableTokens
+            .map(
+              (player) => `
+                <button type="button" class="matching-token ${state.matchingSelectedTokenId === player.id ? 'selected' : ''}" data-role="matching-token" data-token-id="${player.id}">
+                    <span>${formatPlayerAvatar(player)} ${player.name}</span>
+                    <small class="matching-token-drag-hint">${t('matchingBoard.dragMe')}</small>
+                </button>
+              `,
+            )
+            .join('')}
+          </div>
+        </div>
+
+        <div class="guess-status-list">
+          ${state.matchingProgress
+            .map((entry) => {
+              const player = state.players.find((candidate) => candidate.id === entry.playerId)
+              const displayName = player ? player.name : (entry.playerId === state.hostId ? state.hostName : '')
+              const displayAvatar = player ? formatPlayerAvatar(player) : (entry.playerId === state.hostId ? state.hostAvatar : '')
+              return `
+                <div class="guess-status-row ${entry.done ? 'done' : 'waiting'}">
+                  <span>${displayAvatar} ${displayName}</span>
+                  <strong>${entry.done ? t('matchingBoard.playerDone') : t('matchingBoard.playerWaiting')}</strong>
+                </div>
+              `
+            })
+            .join('')}
+        </div>
+
+        ${isDoneGuessing ? `<div class="mini-card"><span>${t('matchingBoard.youAreDone')}</span></div>` : ''}
+
+        ${state.role === 'host'
+          ? `<div class="host-actions-row"><button class="ghost-button" type="button" data-role="force-complete-matching">${t('matchingBoard.forceComplete')}</button></div>`
+          : ''}
+      </section>
+    </main>
+  `
+
+  wireMatchingBoardInteractions()
+}
+
+function wireMatchingBoardInteractions(): void {
+  const canEditMatches = state.matchingProgress.some((entry) => entry.playerId === state.currentPlayerId) && !state.matchingConfirmed
+
+  root.querySelectorAll<HTMLButtonElement>('[data-role="matching-token"]').forEach((tokenEl) => {
+    tokenEl.addEventListener('pointerdown', (event) => startMatchingTokenPointer(event, tokenEl))
+  })
+
+  root.querySelectorAll<HTMLElement>('[data-role="matching-slot"]').forEach((slotEl) => {
+    slotEl.addEventListener('click', () => {
+      if (!canEditMatches || slotEl.classList.contains('filled') || !state.matchingSelectedTokenId) {
+        return
+      }
+      placeMatchToken(slotEl.dataset.slotId ?? '', state.matchingSelectedTokenId)
+    })
+  })
+
+  root.querySelectorAll<HTMLButtonElement>('[data-role="remove-match"]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation()
+      removeMatchToken(button.dataset.slotId ?? '')
+    })
+  })
+
+  root.querySelector('[data-role="force-complete-matching"]')?.addEventListener('click', () => {
+    forceCompleteMatching()
+  })
+}
+
+// Unifies mouse+touch dragging via Pointer Events; a tap (no movement) toggles tap-to-place selection instead.
+function startMatchingTokenPointer(event: PointerEvent, tokenEl: HTMLButtonElement): void {
+  const tokenId = tokenEl.dataset.tokenId ?? ''
+  if (!tokenId || state.matchingConfirmed) {
+    return
+  }
+
+  matchingDragState = { tokenId, startX: event.clientX, startY: event.clientY, moved: false, pointerId: event.pointerId }
+
+  const onMove = (moveEvent: PointerEvent) => {
+    if (!matchingDragState || moveEvent.pointerId !== matchingDragState.pointerId) {
+      return
+    }
+
+    const dx = moveEvent.clientX - matchingDragState.startX
+    const dy = moveEvent.clientY - matchingDragState.startY
+
+    if (!matchingDragState.moved && Math.hypot(dx, dy) > 6) {
+      matchingDragState.moved = true
+      const tokenRect = tokenEl.getBoundingClientRect()
+      matchingDragGhost = tokenEl.cloneNode(true) as HTMLElement
+      matchingDragGhost.classList.add('matching-token-ghost')
+      matchingDragGhost.style.width = `${tokenRect.width}px`
+      matchingDragGhost.style.height = `${tokenRect.height}px`
+      document.body.appendChild(matchingDragGhost)
+    }
+
+    if (matchingDragState.moved && matchingDragGhost) {
+      matchingDragGhost.style.left = `${moveEvent.clientX}px`
+      matchingDragGhost.style.top = `${moveEvent.clientY}px`
+      root.querySelectorAll('[data-role="matching-slot"]').forEach((el) => el.classList.remove('drag-over'))
+      const target = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY)?.closest<HTMLElement>('[data-role="matching-slot"]')
+      if (target && !target.classList.contains('filled')) {
+        target.classList.add('drag-over')
+      }
+    }
+  }
+
+  const onUp = (upEvent: PointerEvent) => {
+    if (!matchingDragState || upEvent.pointerId !== matchingDragState.pointerId) {
+      return
+    }
+
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+
+    const wasDrag = matchingDragState.moved
+    const draggedTokenId = matchingDragState.tokenId
+    matchingDragGhost?.remove()
+    matchingDragGhost = null
+    root.querySelectorAll('[data-role="matching-slot"]').forEach((el) => el.classList.remove('drag-over'))
+    matchingDragState = null
+
+    if (wasDrag) {
+      const target = document.elementFromPoint(upEvent.clientX, upEvent.clientY)?.closest<HTMLElement>('[data-role="matching-slot"]')
+      if (target && !target.classList.contains('filled')) {
+        placeMatchToken(target.dataset.slotId ?? '', draggedTokenId)
+      }
+      return
+    }
+
+    // No movement - treat as a tap: toggle tap-to-place selection.
+    state.matchingSelectedTokenId = state.matchingSelectedTokenId === draggedTokenId ? null : draggedTokenId
+    renderApp()
+  }
+
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
+}
+
 function renderRoundEnd(): void {
   const sortedPlayers = [...state.players].sort((a, b) => b.score - a.score)
   const roundsLeft = state.finalMatchup ? 0 : Math.max(0, state.answers.length - state.answerRoundNumber - 1)
@@ -2842,7 +3153,7 @@ function renderRoundEnd(): void {
   const isEligibleToGuess = state.role === 'player'
     && state.currentPlayerId !== state.askingPlayerId
     && (state.finalMatchup ? !state.finalMatchup.authorIds.includes(state.currentPlayerId) : state.currentPlayerId !== state.answerAuthorId)
-  const overlayKind: ResultOverlayKind | null = state.finalMatchup?.autoRevealed
+  const overlayKind: ResultOverlayKind | null = state.guessFlowMode === 'allAtOnce' || state.finalMatchup?.autoRevealed
     ? null
     : myResult
       ? myResult.correct ? 'success' : 'fail'
@@ -2904,7 +3215,23 @@ function renderRoundEnd(): void {
 
         ${renderQuestionAskerTag()}
 
-        ${state.finalMatchup
+        ${state.guessFlowMode === 'allAtOnce'
+          ? state.matchingBoard
+              .map((slot) => {
+                const author = state.players.find((player) => player.id === slot.authorId)
+                return `
+                  <div class="mini-card">
+                    <span>${t('roundEnd.answerWas')}</span>
+                    <strong>"${slot.text}"</strong>
+                  </div>
+                  <div class="mini-card">
+                    <span>${t('roundEnd.writtenBy')}</span>
+                    <strong>${author ? `${formatPlayerAvatar(author)} ${author.name}` : t('roundEnd.unknown')}</strong>
+                  </div>
+                `
+              })
+              .join('')
+          : state.finalMatchup
           ? state.finalMatchup.answers
               .map((answer) => {
                 const author = state.players.find((player) => player.id === state.finalMatchup?.truth?.[answer.slot])
@@ -3106,6 +3433,11 @@ function renderApp(): void {
 
   if (state.screen === 'player-guessing') {
     renderPlayerGuessing()
+    return
+  }
+
+  if (state.screen === 'matching-board') {
+    renderMatchingBoard()
     return
   }
 

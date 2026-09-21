@@ -2,6 +2,8 @@
   "common.playingAs": "משחק בתור",
   "common.host": "מנחה בלבד",
   "common.hostAndPlayer": "מנחה ושחקן",
+  "common.guessFlowSequential": "אחד אחרי השני",
+  "common.guessFlowAllAtOnce": "הכל בבת אחת",
   "common.hostLoggedIn": "מחובר",
   "common.hostNotLoggedIn": "לא מחובר",
   "common.player": "שחקן",
@@ -48,6 +50,10 @@
   "hostSetup.allowSuggestionsHint": "שחקנים יוכלו לכתוב רעיונות לשאלות שתוכל לבחור מהם. לא זמין יחד עם 'שחק כמשתתף'.",
   "hostSetup.questionPoolLabel": "מאגר שאלות לפני המשחק",
   "hostSetup.questionPoolHint": "כולם (כולל המנחה) שולחים 0-3 שאלות בלובי. המשחק משוחק על כל השאלות שנשלחו.",
+  "hostSetup.guessFlowLabel": "אופן הניחוש",
+  "hostSetup.guessFlowSequentialLabel": "אחד אחרי השני",
+  "hostSetup.guessFlowAllAtOnceLabel": "הכל בבת אחת",
+  "hostSetup.guessFlowHint": "אחד אחרי השני: מנחשים תשובה אחת בכל פעם עם ספירה לאחור. הכל בבת אחת: כל התשובות מוצגות יחד והשחקנים גוררים שמות על התשובות, ללא הגבלת זמן.",
   "hostSetup.submit": "צור חדר",
   "hostSetup.back": "חזרה",
 
@@ -228,6 +234,17 @@
   "finalMatchup.guessedLabel": "ניחש/ה {name} עבור תשובה {slot}",
   "finalMatchup.guessedLine": "{guesser} ניחש/ה {guessed} עבור תשובה {slot}",
   "finalMatchup.autoRevealed": "לא נשאר אף אחד שיכול לנחש את זה, אז לא היו נקודות לניחוש.",
+
+  "matchingBoard.instructionsEyebrow": "הכל בבת אחת",
+  "matchingBoard.instructions": "גררו (או הקישו) כל שם על התשובה שלדעתכם הוא כתב",
+  "matchingBoard.untimedLabel": "ללא הגבלת זמן",
+  "matchingBoard.dropHere": "שחררו שם כאן",
+  "matchingBoard.dragMe": "גררו אותי...",
+  "matchingBoard.removeMatch": "בטלו התאמה זו",
+  "matchingBoard.playerDone": "סיים לנחש",
+  "matchingBoard.playerWaiting": "עדיין מנחש",
+  "matchingBoard.youAreDone": "סיימת! ממתינים לשאר השחקנים לסיים...",
+  "matchingBoard.forceComplete": "סיים סבב זה בכפייה",
 
   "guessIntro.getReady": "התכוננו לנחש!",
 

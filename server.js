@@ -308,6 +308,151 @@ function canDismissSuggestion(room, playerId) {
   return Boolean(room && playerId && room.hostId === playerId);
 }
 
+function normalizeGuessFlowMode(value) {
+  return value === 'allAtOnce' ? 'allAtOnce' : 'sequential';
+}
+
+// All non-asker players take part in matching (host included only when hostIsPlayer put them in room.players).
+function getEligibleMatcherIds(room) {
+  return room.players.filter((player) => player.id !== room.askingPlayerId).map((player) => player.id);
+}
+
+function isMatchingComplete(room) {
+  const eligibleIds = getEligibleMatcherIds(room);
+  if (eligibleIds.length === 0) {
+    return true;
+  }
+  return eligibleIds.every((id) => room.matchingConfirmedIds.includes(id));
+}
+
+function canSubmitMatch(room, guesserId, slotId, guessedId) {
+  if (!room || room.phase !== 'matching' || !guesserId || !slotId || !guessedId) {
+    return false;
+  }
+  if (!getEligibleMatcherIds(room).includes(guesserId)) {
+    return false;
+  }
+  if (room.matchingConfirmedIds.includes(guesserId)) {
+    return false;
+  }
+  const slot = room.matchingBoard.find((entry) => entry.slotId === slotId);
+  if (!slot) {
+    return false;
+  }
+  // The name-token pool is exactly this round's answer authors, not every player in the room.
+  const authorIds = new Set(room.matchingBoard.map((entry) => entry.authorId));
+  if (!authorIds.has(guessedId)) {
+    return false;
+  }
+  const alreadyPlacedThisSlot = room.matches.some((match) => match.guesserId === guesserId && match.slotId === slotId);
+  const tokenAlreadyUsed = room.matches.some((match) => match.guesserId === guesserId && match.guessedId === guessedId);
+  return !alreadyPlacedThisSlot && !tokenAlreadyUsed;
+}
+
+function submitMatch(room, guesserId, slotId, guessedId) {
+  if (!canSubmitMatch(room, guesserId, slotId, guessedId)) {
+    return false;
+  }
+  const guessedPlayer = findPlayerById(room, guessedId);
+  room.matches.push({
+    guesserId,
+    slotId,
+    guessedId,
+    guessedName: guessedPlayer.name,
+    submittedAt: null,
+  });
+
+  const myMatches = room.matches.filter((match) => match.guesserId === guesserId);
+  if (myMatches.length === room.matchingBoard.length) {
+    const completedAt = Date.now();
+    myMatches.forEach((match) => {
+      match.submittedAt = completedAt;
+    });
+    room.matchingConfirmedIds.push(guesserId);
+  }
+
+  return true;
+}
+
+function removeMatch(room, guesserId, slotId) {
+  if (!room || room.phase !== 'matching' || !guesserId || !slotId) {
+    return false;
+  }
+  if (!getEligibleMatcherIds(room).includes(guesserId) || room.matchingConfirmedIds.includes(guesserId)) {
+    return false;
+  }
+  const matchIndex = room.matches.findIndex((match) => match.guesserId === guesserId && match.slotId === slotId);
+  if (matchIndex < 0) {
+    return false;
+  }
+  room.matches.splice(matchIndex, 1);
+  return true;
+}
+
+function canForceCompleteMatching(room, playerId) {
+  return Boolean(room && room.phase === 'matching' && playerId && room.hostId === playerId);
+}
+
+// Per answer, correct guessers are ranked by placement speed: fastest of K correct gets K points, slowest gets 1.
+function calculateAllAtOnceScores(room) {
+  if (room.phase !== 'matching') {
+    return;
+  }
+
+  const pointsByMatch = new Map();
+  room.matchingBoard.forEach((slot) => {
+    const correctMatches = room.matches
+      .filter((match) => room.matchingConfirmedIds.includes(match.guesserId))
+      .filter((match) => match.slotId === slot.slotId && match.guessedId === slot.authorId)
+      .sort((a, b) => a.submittedAt - b.submittedAt);
+    const total = correctMatches.length;
+    correctMatches.forEach((match, index) => {
+      const points = total - index;
+      pointsByMatch.set(match, points);
+      const guesser = findPlayerById(room, match.guesserId);
+      if (guesser) {
+        guesser.score += points;
+      }
+    });
+  });
+
+  room.roundResults = room.matches.filter((match) => room.matchingConfirmedIds.includes(match.guesserId)).map((match) => {
+    const slot = room.matchingBoard.find((entry) => entry.slotId === match.slotId);
+    const guesser = findPlayerById(room, match.guesserId);
+    return {
+      guesserName: guesser ? guesser.name : '',
+      guessedName: match.guessedName,
+      correct: Boolean(slot) && match.guessedId === slot.authorId,
+      points: pointsByMatch.get(match) || 0,
+    };
+  });
+
+  room.phase = 'round-end';
+  room.timeLeft = 0;
+  room.roundEndConfirmedIds = [];
+  broadcastRoom(room);
+}
+
+// Builds the single combined matching round for a question in allAtOnce mode (replaces the per-answer answerQueue flow).
+function buildMatchingBoard(room) {
+  room.matchingBoard = room.answers
+    .map((answer) => ({ slotId: crypto.randomUUID(), text: answer.text, authorId: answer.playerId }))
+    .sort(() => Math.random() - 0.5);
+  room.matches = [];
+  room.matchingConfirmedIds = [];
+  room.answerQueue = [];
+  room.currentAnswer = null;
+  room.answerAuthorId = null;
+  room.selectedAnswer = '';
+  room.finalMatchup = null;
+  room.answerRoundNumber = room.answers.length;
+  room.timeLeft = 0;
+  room.phase = 'matching';
+  clearGuessTimeout(room);
+  clearGuessCountdown(room);
+  broadcastRoom(room);
+}
+
 // Only answer authors are eligible, excluding those revealed in an earlier round and the current asker.
 function getEligibleGuessTargetIds(room) {
   if (room.finalMatchup) {
@@ -380,6 +525,26 @@ function makeRoomState(room, viewerPlayerId = null) {
     currentPoolQuestionIndex: room.currentPoolQuestionIndex || 0,
     allPlayersReady: room.players.length > 0 && room.players.every((p) => Boolean(p.ready)),
     canStartGame: canStartGame(room),
+    guessFlowMode: room.guessFlowMode || 'sequential',
+    // Text only while matching is live - authorId is withheld so a client can't read the answer off the network payload.
+    matchingBoard: (room.matchingBoard || []).map((slot) => (
+      room.phase === 'matching'
+        ? { slotId: slot.slotId, text: slot.text }
+        : { slotId: slot.slotId, text: slot.text, authorId: slot.authorId }
+    )),
+    // The name-token pool (who wrote an answer this round) - same visibility as remainingAuthorIds above.
+    matchingAuthorIds: (room.matchingBoard || []).map((slot) => slot.authorId),
+    myMatches: (room.matches || [])
+      .filter((match) => match.guesserId === viewerPlayerId)
+      .map((match) => ({ slotId: match.slotId, guessedId: match.guessedId, guessedName: match.guessedName })),
+    matchingConfirmed: (room.matchingConfirmedIds || []).includes(viewerPlayerId),
+    // Done/not-done only - never expose other players' in-progress placements.
+    matchingProgress: room.phase === 'matching'
+      ? getEligibleMatcherIds(room).map((id) => ({
+          playerId: id,
+          done: (room.matchingConfirmedIds || []).includes(id),
+        }))
+      : [],
     finalMatchup: room.finalMatchup
       ? {
           answers: room.finalMatchup.answers,
@@ -520,7 +685,7 @@ function normalizeGuessTimeoutSeconds(value) {
   return GUESS_TIMEOUT_SECONDS;
 }
 
-function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvatar, guessTimeoutSeconds, addSelfAsPlayer = false, allowPlayerSuggestions = false, questionPoolMode = false }) {
+function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvatar, guessTimeoutSeconds, addSelfAsPlayer = false, allowPlayerSuggestions = false, questionPoolMode = false, guessFlowMode = 'sequential' }) {
   const code = createRoomCode();
   const hostId = `${code}-host-${Date.now()}`;
   const normalizedHostName = (hostName || 'Host').trim() || 'Host';
@@ -571,6 +736,10 @@ function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvata
     currentPoolQuestionIndex: 0,
     hostReady: false,
     roundEndConfirmedIds: [],
+    guessFlowMode: normalizeGuessFlowMode(guessFlowMode),
+    matchingBoard: [],
+    matches: [],
+    matchingConfirmedIds: [],
   };
 
   if (room.hostIsPlayer) {
@@ -802,6 +971,8 @@ function startRound(room, customQuestion = '') {
   room.playerTurnIndex = 0;
   room.timeLeft = 0;
   room.finalMatchup = null;
+  room.matchingBoard = [];
+  room.matches = [];
 
   room.players.forEach((player) => {
     player.score = player.score || 0;
@@ -853,6 +1024,8 @@ function continueToNextQuestion(room) {
   room.currentAnswer = null;
   room.roundResults = [];
   room.finalMatchup = null;
+  room.matchingBoard = [];
+  room.matches = [];
 
   broadcastRoom(room);
 }
@@ -875,6 +1048,8 @@ function startNewGame(room) {
   room.currentAnswer = null;
   room.roundResults = [];
   room.finalMatchup = null;
+  room.matchingBoard = [];
+  room.matches = [];
   room.poolQuestions = [];
   room.questionPool = [];
   room.currentPoolQuestionIndex = 0;
@@ -997,6 +1172,11 @@ function prepareCurrentAnswer(room) {
 function lockAnswers(room) {
   // A pool of 1-2 answers can only ever produce trivial single-candidate guesses - require at least 3.
   if (room.phase !== 'answer-collection' || room.answers.length < 3) {
+    return;
+  }
+
+  if (room.guessFlowMode === 'allAtOnce') {
+    buildMatchingBoard(room);
     return;
   }
 
@@ -1446,6 +1626,7 @@ wss.on('connection', (socket, request) => {
             addSelfAsPlayer: message.addSelfAsPlayer,
             allowPlayerSuggestions: message.allowPlayerSuggestions,
             questionPoolMode: message.questionPoolMode,
+            guessFlowMode: message.guessFlowMode,
           });
           attachSocketToRoom(roomData, socket, roomData.hostId);
           sendRoomSession(socket, roomData, 'host', roomData.hostId, roomData.hostName, roomData.hostReconnectToken);
@@ -1702,6 +1883,39 @@ wss.on('connection', (socket, request) => {
           break;
         }
 
+        case 'submit-match': {
+          if (!room) {
+            return;
+          }
+          const placed = submitMatch(room, socket.playerId, message.slotId, message.guessedId);
+          if (!placed) {
+            return;
+          }
+          broadcastRoom(room);
+          if (isMatchingComplete(room)) {
+            logger.event('matching-round-completed', { roomCode: room.code });
+            calculateAllAtOnceScores(room);
+          }
+          break;
+        }
+
+        case 'remove-match': {
+          if (!room || !removeMatch(room, socket.playerId, message.slotId)) {
+            return;
+          }
+          broadcastRoom(room);
+          break;
+        }
+
+        case 'force-complete-matching': {
+          if (!canForceCompleteMatching(room, socket.playerId)) {
+            return;
+          }
+          logger.event('matching-force-completed', { roomCode: room.code });
+          calculateAllAtOnceScores(room);
+          break;
+        }
+
         case 'submit-question': {
           if (!room || !room.hostIsPlayer || room.phase !== 'asking' || socket.playerId !== room.askingPlayerId) {
             return;
@@ -1858,6 +2072,15 @@ export {
   getRoundEndConfirmerIds,
   hasAllRoundEndConfirmed,
   canConfirmNextRound,
+  normalizeGuessFlowMode,
+  getEligibleMatcherIds,
+  isMatchingComplete,
+  canSubmitMatch,
+  submitMatch,
+  removeMatch,
+  canForceCompleteMatching,
+  calculateAllAtOnceScores,
+  buildMatchingBoard,
 };
 
 // Graceful shutdown for testing

@@ -2,6 +2,8 @@
   "common.playingAs": "Playing as",
   "common.host": "Host only",
   "common.hostAndPlayer": "Host & Player",
+  "common.guessFlowSequential": "Sequential",
+  "common.guessFlowAllAtOnce": "All at once",
   "common.hostLoggedIn": "Logged in",
   "common.hostNotLoggedIn": "Not logged in",
   "common.player": "Player",
@@ -48,6 +50,10 @@
   "hostSetup.allowSuggestionsHint": "Players can write question ideas for you to pick from. Not available together with 'Play as a participant'.",
   "hostSetup.questionPoolLabel": "Pre-game question pool",
   "hostSetup.questionPoolHint": "Everyone (including the host) submits 0-3 questions in the lobby. The game plays through all submitted questions.",
+  "hostSetup.guessFlowLabel": "Guessing flow",
+  "hostSetup.guessFlowSequentialLabel": "One at a time",
+  "hostSetup.guessFlowAllAtOnceLabel": "All at once",
+  "hostSetup.guessFlowHint": "One at a time: answers are guessed one by one with a countdown. All at once: every answer is shown together and players drag names onto answers, untimed.",
   "hostSetup.submit": "Create room",
   "hostSetup.back": "Back",
 
@@ -228,6 +234,17 @@
   "finalMatchup.guessedLabel": "guessed {name} for answer {slot}",
   "finalMatchup.guessedLine": "{guesser} guessed {guessed} for answer {slot}",
   "finalMatchup.autoRevealed": "Nobody else was left to guess this one, so no points were up for grabs.",
+
+  "matchingBoard.instructionsEyebrow": "All at once",
+  "matchingBoard.instructions": "Drag (or tap) each name onto the answer you think they wrote",
+  "matchingBoard.untimedLabel": "No time limit",
+  "matchingBoard.dropHere": "Drop a name here",
+  "matchingBoard.dragMe": "Drag me...",
+  "matchingBoard.removeMatch": "Undo this match",
+  "matchingBoard.playerDone": "Done guessing",
+  "matchingBoard.playerWaiting": "Still guessing",
+  "matchingBoard.youAreDone": "You're done! Waiting for the others to finish...",
+  "matchingBoard.forceComplete": "Force-finish this round",
 
   "guessIntro.getReady": "Get ready to guess!",
 

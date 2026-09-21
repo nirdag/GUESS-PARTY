@@ -48,6 +48,15 @@ import {
   getRoundEndConfirmerIds,
   hasAllRoundEndConfirmed,
   canConfirmNextRound,
+  normalizeGuessFlowMode,
+  getEligibleMatcherIds,
+  isMatchingComplete,
+  canSubmitMatch,
+  submitMatch,
+  removeMatch,
+  canForceCompleteMatching,
+  calculateAllAtOnceScores,
+  buildMatchingBoard,
 } from './server.js';
 
 // Mock room/player creation for testing
@@ -2040,3 +2049,205 @@ describe('HIGH: Pre-game question pool mode', () => {
     expect(room.phase).toBe('game-end');
   });
 });
+
+describe('HIGH: All-at-once guessing mode', () => {
+  function setUpMatchingRoom({ questionPoolMode = false } = {}) {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', guessFlowMode: 'allAtOnce', questionPoolMode });
+    const alice = addPlayerToRoom(room, 'Alice');
+    const bob = addPlayerToRoom(room, 'Bob');
+    const charlie = addPlayerToRoom(room, 'Charlie');
+
+    if (questionPoolMode) {
+      addPoolQuestion(room, alice.id, alice.name, 'Question Number One for the test pool?');
+      setPlayerReady(room, alice.id, true);
+      setPlayerReady(room, bob.id, true);
+      setPlayerReady(room, charlie.id, true);
+    }
+
+    startRound(room);
+    submitAnswer(room, alice.id, 'Alice answer');
+    submitAnswer(room, bob.id, 'Bob answer');
+    submitAnswer(room, charlie.id, 'Charlie answer');
+    lockAnswers(room);
+
+    return { room, alice, bob, charlie };
+  }
+
+  it('normalizeGuessFlowMode defaults to sequential for anything but allAtOnce', () => {
+    expect(normalizeGuessFlowMode(undefined)).toBe('sequential');
+    expect(normalizeGuessFlowMode('bogus')).toBe('sequential');
+    expect(normalizeGuessFlowMode('allAtOnce')).toBe('allAtOnce');
+  });
+
+  it('createRoom stores guessFlowMode and defaults to sequential', () => {
+    const sequentialRoom = createRoom({ hostName: 'Host', hostAccountId: 'host-account' });
+    expect(sequentialRoom.guessFlowMode).toBe('sequential');
+
+    const allAtOnceRoom = createRoom({ hostName: 'Host', hostAccountId: 'host-account', guessFlowMode: 'allAtOnce' });
+    expect(allAtOnceRoom.guessFlowMode).toBe('allAtOnce');
+  });
+
+  it('lockAnswers builds a matchingBoard and enters the matching phase instead of the sequential answerQueue flow', () => {
+    const { room, alice, bob, charlie } = setUpMatchingRoom();
+
+    expect(room.phase).toBe('matching');
+    expect(room.answerQueue).toEqual([]);
+    expect(room.matchingBoard).toHaveLength(3);
+    const authorIds = room.matchingBoard.map((slot) => slot.authorId).sort();
+    expect(authorIds).toEqual([alice.id, bob.id, charlie.id].sort());
+  });
+
+  it('makeRoomState withholds authorId while matching is live but reveals it afterwards', () => {
+    const { room } = setUpMatchingRoom();
+
+    const liveState = makeRoomState(room);
+    expect(liveState.matchingBoard.every((slot) => slot.authorId === undefined)).toBe(true);
+    expect(liveState.matchingBoard.every((slot) => typeof slot.text === 'string')).toBe(true);
+
+    // Force-complete to flip phase to round-end and re-check the same board reveals authorId now.
+    calculateAllAtOnceScores(room);
+    const postState = makeRoomState(room);
+    expect(postState.matchingBoard.every((slot) => typeof slot.authorId === 'string')).toBe(true);
+  });
+
+  it('submitMatch rejects wrong phase, ineligible guesser, duplicate slot, and duplicate token reuse', () => {
+    const { room, alice, bob, charlie } = setUpMatchingRoom();
+    const [slotA, slotB] = room.matchingBoard;
+
+    // Wrong slot id / guessed id are rejected
+    expect(submitMatch(room, alice.id, 'not-a-real-slot', bob.id)).toBe(false);
+
+    // A valid placement succeeds
+    expect(submitMatch(room, alice.id, slotA.slotId, bob.id)).toBe(true);
+
+    // Same guesser can't re-place the same slot
+    expect(submitMatch(room, alice.id, slotA.slotId, charlie.id)).toBe(false);
+
+    // Same guesser can't reuse the same name token on a different slot
+    expect(submitMatch(room, alice.id, slotB.slotId, bob.id)).toBe(false);
+
+    // Wrong-phase rejection
+    room.phase = 'round-end';
+    expect(submitMatch(room, bob.id, slotA.slotId, charlie.id)).toBe(false);
+    room.phase = 'matching';
+  });
+
+  it('allows a matcher to undo an unconfirmed placement but locks their board after the final drop', () => {
+    vi.useFakeTimers();
+    const { room, alice, bob } = setUpMatchingRoom();
+    const [slotA, slotB, slotC] = room.matchingBoard;
+
+    expect(submitMatch(room, alice.id, slotA.slotId, bob.id)).toBe(true);
+    expect(removeMatch(room, bob.id, slotA.slotId)).toBe(false);
+    expect(removeMatch(room, alice.id, slotA.slotId)).toBe(true);
+    expect(submitMatch(room, alice.id, slotA.slotId, slotA.authorId)).toBe(true);
+
+    vi.setSystemTime(1234);
+    expect(submitMatch(room, alice.id, slotB.slotId, slotB.authorId)).toBe(true);
+    expect(submitMatch(room, alice.id, slotC.slotId, slotC.authorId)).toBe(true);
+
+    const aliceMatches = room.matches.filter((match) => match.guesserId === alice.id);
+    expect(room.matchingConfirmedIds).toContain(alice.id);
+    expect(aliceMatches.every((match) => match.submittedAt === 1234)).toBe(true);
+    expect(removeMatch(room, alice.id, slotA.slotId)).toBe(false);
+    expect(submitMatch(room, alice.id, slotA.slotId, bob.id)).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it('calculateAllAtOnceScores ranks correct guessers per answer by placement speed (fastest gets most points)', () => {
+    vi.useFakeTimers();
+    const { room, alice, bob, charlie } = setUpMatchingRoom();
+    const dave = addPlayerToRoom(room, 'Dave');
+    // Dave joined after answers were collected, so he's an eligible guesser with no answer of his own on the board.
+
+    // Bob is fastest, Charlie second, Dave slowest. Every confirmed matcher is correct on all three slots.
+    vi.setSystemTime(1000);
+    room.matchingBoard.forEach((slot) => submitMatch(room, bob.id, slot.slotId, slot.authorId));
+    vi.setSystemTime(2000);
+    room.matchingBoard.forEach((slot) => submitMatch(room, charlie.id, slot.slotId, slot.authorId));
+    vi.setSystemTime(3000);
+    room.matchingBoard.forEach((slot) => submitMatch(room, dave.id, slot.slotId, slot.authorId));
+
+    calculateAllAtOnceScores(room);
+
+    expect(bob.score).toBe(9);
+    expect(charlie.score).toBe(6);
+    expect(dave.score).toBe(3);
+    expect(room.phase).toBe('round-end');
+    vi.useRealTimers();
+  });
+
+  it('calculateAllAtOnceScores gives 0 points for incorrect matches', () => {
+    const { room, alice, bob, charlie } = setUpMatchingRoom();
+
+    room.matchingBoard.forEach((slot, index) => {
+      const wrongAuthor = room.matchingBoard[(index + 1) % room.matchingBoard.length].authorId;
+      submitMatch(room, bob.id, slot.slotId, wrongAuthor);
+    });
+    calculateAllAtOnceScores(room);
+
+    expect(bob.score).toBe(0);
+    const result = room.roundResults.find((entry) => entry.guesserName === bob.name);
+    expect(result.correct).toBe(false);
+    expect(result.points).toBe(0);
+  });
+
+  it('isMatchingComplete is true only once every eligible guesser has finalized their board on the final drop', () => {
+    const { room, alice, bob, charlie } = setUpMatchingRoom();
+
+    expect(isMatchingComplete(room)).toBe(false);
+
+    // Each player fully matches all 3 slots (including their own, per design decision).
+    [alice, bob, charlie].forEach((guesser) => {
+      room.matchingBoard.forEach((slot) => {
+        submitMatch(room, guesser.id, slot.slotId, slot.authorId);
+      });
+    });
+
+    expect(isMatchingComplete(room)).toBe(true);
+  });
+
+  it('a disconnected eligible guesser blocks completion until they are excluded or the host force-completes', () => {
+    const { room, alice, bob, charlie } = setUpMatchingRoom();
+
+    charlie.disconnectedAt = Date.now();
+
+    room.matchingBoard.forEach((slot) => {
+      submitMatch(room, alice.id, slot.slotId, slot.authorId);
+      submitMatch(room, bob.id, slot.slotId, slot.authorId);
+    });
+
+    // Charlie is still counted as eligible (disconnect blocks, it doesn't exempt) - matching isn't complete.
+    expect(isMatchingComplete(room)).toBe(false);
+    expect(room.phase).toBe('matching');
+
+    expect(canForceCompleteMatching(room, room.hostId)).toBe(true);
+    expect(canForceCompleteMatching(room, alice.id)).toBe(false);
+
+    calculateAllAtOnceScores(room);
+    expect(room.phase).toBe('round-end');
+  });
+
+  it('force-complete scores whatever placements exist; unmatched slots simply score 0 and are excluded from ranking', () => {
+    const { room, alice, bob } = setUpMatchingRoom();
+    const slotForAlice = room.matchingBoard.find((slot) => slot.authorId === alice.id);
+
+    submitMatch(room, bob.id, slotForAlice.slotId, alice.id);
+    calculateAllAtOnceScores(room);
+
+    expect(bob.score).toBe(0);
+    expect(room.roundResults).toHaveLength(0);
+  });
+
+  it('getEligibleMatcherIds excludes the asker in host-as-player rooms', () => {
+    const room = createRoom({ hostName: 'Host', hostAccountId: 'host-account', guessFlowMode: 'allAtOnce', addSelfAsPlayer: true });
+    addPlayerToRoom(room, 'Alice');
+    addPlayerToRoom(room, 'Bob');
+    addPlayerToRoom(room, 'Charlie');
+    startRound(room);
+
+    expect(room.askingPlayerId).toBe(room.hostId);
+    expect(getEligibleMatcherIds(room)).not.toContain(room.hostId);
+  });
+});
+
