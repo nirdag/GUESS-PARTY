@@ -742,6 +742,16 @@ h1 {
   color: var(--muted);
 }
 
+.admin-question-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-translation-box {
+  align-items: stretch;
+}
+
 .leaderboard-row.winner {
   background: rgba(255, 184, 108, 0.08);
   border-color: rgba(255, 184, 108, 0.35);

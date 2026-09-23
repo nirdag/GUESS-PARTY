@@ -36,6 +36,11 @@ type GalleryQuestion = {
   text: string
 }
 
+type AdminGalleryQuestion = GalleryQuestion & {
+  language: LanguageCode
+  translationGroupId: string
+}
+
 type SuggestionEntry = {
   id: string
   playerId: string
@@ -294,7 +299,13 @@ const state = {
   askQuestionDraft: '',
   adminError: '',
   adminLanguageFilter: 'en' as LanguageCode,
-  adminQuestions: [] as GalleryQuestion[],
+  adminQuestions: [] as AdminGalleryQuestion[],
+  adminLinkedGroupIds: new Set<string>(),
+  adminTranslatingId: '' as string,
+  adminTranslationTarget: '' as LanguageCode | '',
+  adminTranslationDraft: '',
+  adminTranslationError: '',
+  adminTranslationLoading: false,
   showQuestionGallery: false,
   galleryQuestions: [] as GalleryQuestion[],
   privateQuestions: [] as GalleryQuestion[],
@@ -1650,6 +1661,21 @@ async function fetchAdminQuestions(): Promise<void> {
   } catch {
     state.adminQuestions = []
   }
+
+  // Fetch the other language's groupIds too, so rows that already have a linked translation can hide the Translate button.
+  const otherLanguage = Object.keys(languages).find((code) => code !== state.adminLanguageFilter) as LanguageCode | undefined
+  if (!otherLanguage) {
+    state.adminLinkedGroupIds = new Set()
+    return
+  }
+  try {
+    const response = await fetch(buildApiUrl(`/questions?language=${otherLanguage}`), { credentials: 'include' })
+    const payload = await response.json()
+    const otherQuestions = (payload.questions ?? []) as AdminGalleryQuestion[]
+    state.adminLinkedGroupIds = new Set(otherQuestions.map((question) => question.translationGroupId))
+  } catch {
+    state.adminLinkedGroupIds = new Set()
+  }
 }
 
 async function fetchMyQuestions(): Promise<void> {
@@ -1898,6 +1924,139 @@ function renderAdminLogin(): void {
   })
 }
 
+function renderAdminQuestionRow(question: AdminGalleryQuestion): string {
+  const hasLinked = state.adminLinkedGroupIds.has(question.translationGroupId)
+  const isTranslating = state.adminTranslatingId === question.id
+
+  return `
+    <div class="result-row">
+      <span>${question.text}</span>
+      <div class="admin-question-actions">
+        ${hasLinked
+          ? `<span class="chip">${t('adminGallery.linkedBadge')}</span>`
+          : `<button class="secondary-button" type="button" data-role="admin-translate-question" data-question-id="${question.id}">${t('adminGallery.translateButton')}</button>`}
+        <button class="ghost-button" type="button" data-role="admin-delete-question" data-question-id="${question.id}" data-linked="${hasLinked}">${t('adminGallery.deleteButton')}</button>
+      </div>
+    </div>
+    ${isTranslating ? renderAdminTranslationBox() : ''}
+  `
+}
+
+function renderAdminTranslationBox(): string {
+  if (state.adminTranslationLoading) {
+    return `<div class="result-row admin-translation-box"><span>${t('adminGallery.translationLoading')}</span></div>`
+  }
+
+  const targetLabel = state.adminTranslationTarget ? t(`languages.${state.adminTranslationTarget}`) : ''
+  return `
+    <div class="result-row admin-translation-box">
+      <div class="host-question-form" style="width: 100%;">
+        <label>${t('adminGallery.translationPreviewTitle', { language: targetLabel })}</label>
+        ${state.adminTranslationError ? `<p class="membership-error">${state.adminTranslationError}</p>` : ''}
+        <textarea rows="3" maxlength="220" data-role="admin-translation-draft">${state.adminTranslationDraft}</textarea>
+        <div class="host-question-actions">
+          <button class="primary-button" type="button" data-role="admin-translation-save">${t('adminGallery.saveTranslation')}</button>
+          <button class="ghost-button" type="button" data-role="admin-translation-cancel">${t('adminGallery.cancelTranslation')}</button>
+        </div>
+      </div>
+    </div>
+  `
+}
+
+function cancelAdminTranslate(): void {
+  state.adminTranslatingId = ''
+  state.adminTranslationTarget = ''
+  state.adminTranslationDraft = ''
+  state.adminTranslationError = ''
+  state.adminTranslationLoading = false
+}
+
+async function startAdminTranslate(questionId: string): Promise<void> {
+  state.adminTranslatingId = questionId
+  state.adminTranslationDraft = ''
+  state.adminTranslationError = ''
+  state.adminTranslationLoading = true
+  renderApp()
+
+  try {
+    const response = await fetch(buildApiUrl('/admin/questions/translate-preview'), {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: questionId }),
+    })
+    const payload = await response.json()
+    if (!response.ok) {
+      state.adminTranslationError = payload.error || t('adminGallery.translationNotConfiguredWarning')
+      return
+    }
+    state.adminTranslationTarget = payload.targetLanguage as LanguageCode
+    state.adminTranslationDraft = payload.translatedText ?? ''
+  } catch {
+    state.adminTranslationError = t('adminGallery.translationNotConfiguredWarning')
+  } finally {
+    state.adminTranslationLoading = false
+    renderApp()
+  }
+}
+
+async function saveAdminTranslation(): Promise<void> {
+  const source = state.adminQuestions.find((question) => question.id === state.adminTranslatingId)
+  const text = state.adminTranslationDraft.trim()
+  if (!source || !state.adminTranslationTarget || text.length < 8) {
+    state.adminTranslationError = t('prompts.questionTooShort')
+    renderApp()
+    return
+  }
+
+  try {
+    const response = await fetch(buildApiUrl('/admin/questions'), {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ language: state.adminTranslationTarget, text, translationGroupId: source.translationGroupId }),
+    })
+    const payload = await response.json()
+    if (!response.ok) {
+      state.adminTranslationError = payload.error || t('adminGallery.translationNotConfiguredWarning')
+      renderApp()
+      return
+    }
+    cancelAdminTranslate()
+    await fetchAdminQuestions()
+    renderApp()
+  } catch {
+    state.adminTranslationError = t('adminGallery.translationNotConfiguredWarning')
+    renderApp()
+  }
+}
+
+async function deleteAdminQuestionAndMaybeLinked(questionId: string, hasLinked: boolean): Promise<void> {
+  const source = state.adminQuestions.find((question) => question.id === questionId)
+  await fetch(buildApiUrl(`/admin/questions/${questionId}`), { method: 'DELETE', credentials: 'include' })
+
+  if (!hasLinked || !source) {
+    return
+  }
+
+  const otherLanguage = Object.keys(languages).find((code) => code !== state.adminLanguageFilter) as LanguageCode | undefined
+  if (!otherLanguage) {
+    return
+  }
+
+  try {
+    const response = await fetch(buildApiUrl(`/questions?language=${otherLanguage}`), { credentials: 'include' })
+    const payload = await response.json()
+    const otherQuestions = (payload.questions ?? []) as AdminGalleryQuestion[]
+    const linked = otherQuestions.find((question) => question.translationGroupId === source.translationGroupId)
+    if (linked) {
+      await fetch(buildApiUrl(`/admin/questions/${linked.id}`), { method: 'DELETE', credentials: 'include' })
+    }
+  } catch {
+    // Best-effort cleanup; the source question is already deleted regardless.
+  }
+}
+
 function renderAdminGallery(): void {
   const languageOptions = Object.values(languages)
     .map((meta) => `<option value="${meta.code}" ${meta.code === state.adminLanguageFilter ? 'selected' : ''}>${t(`languages.${meta.code}`)}</option>`)
@@ -1927,14 +2086,7 @@ function renderAdminGallery(): void {
         <div class="result-list">
           ${state.adminQuestions.length > 0
             ? state.adminQuestions
-                .map(
-                  (question) => `
-                    <div class="result-row">
-                      <span>${question.text}</span>
-                      <button class="ghost-button" type="button" data-role="admin-delete-question" data-question-id="${question.id}">${t('adminGallery.deleteButton')}</button>
-                    </div>
-                  `,
-                )
+                .map((question) => renderAdminQuestionRow(question))
                 .join('')
             : `<div class="result-row"><span>${t('adminGallery.emptyState')}</span></div>`}
         </div>
@@ -1953,16 +2105,40 @@ function renderAdminGallery(): void {
 
   root.querySelector<HTMLSelectElement>('#admin-filter-language')?.addEventListener('change', (event) => {
     state.adminLanguageFilter = (event.target as HTMLSelectElement).value as LanguageCode
+    cancelAdminTranslate()
     void fetchAdminQuestions().then(renderApp)
   })
 
   root.querySelectorAll<HTMLButtonElement>('[data-role="admin-delete-question"]').forEach((button) => {
     button.addEventListener('click', async () => {
       const questionId = button.dataset.questionId ?? ''
-      await fetch(buildApiUrl(`/admin/questions/${questionId}`), { method: 'DELETE', credentials: 'include' })
+      const hasLinked = button.dataset.linked === 'true'
+      if (hasLinked && !window.confirm(t('adminGallery.deleteLinkedPrompt'))) {
+        return
+      }
+      await deleteAdminQuestionAndMaybeLinked(questionId, hasLinked)
       await fetchAdminQuestions()
       renderApp()
     })
+  })
+
+  root.querySelectorAll<HTMLButtonElement>('[data-role="admin-translate-question"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      void startAdminTranslate(button.dataset.questionId ?? '')
+    })
+  })
+
+  root.querySelector('[data-role="admin-translation-cancel"]')?.addEventListener('click', () => {
+    cancelAdminTranslate()
+    renderApp()
+  })
+
+  root.querySelector<HTMLTextAreaElement>('[data-role="admin-translation-draft"]')?.addEventListener('input', (event) => {
+    state.adminTranslationDraft = (event.target as HTMLTextAreaElement).value
+  })
+
+  root.querySelector('[data-role="admin-translation-save"]')?.addEventListener('click', () => {
+    void saveAdminTranslation()
   })
 
   const addForm = root.querySelector<HTMLFormElement>('#admin-add-question-form')

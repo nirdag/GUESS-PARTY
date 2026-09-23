@@ -34,6 +34,7 @@ var acsName = '${appName}-acs'
 var emailServiceName = '${appName}-email'
 var logAnalyticsName = '${appName}-logs'
 var appInsightsName = '${appName}-insights'
+var translatorName = '${appName}-translator'
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: logAnalyticsName
@@ -176,6 +177,19 @@ resource acs 'Microsoft.Communication/communicationServices@2023-04-01' = {
   }
 }
 
+// Auto-translates admin gallery questions between supported languages (en/he). F0 free tier: 2M chars/month, one F0 Translator per subscription.
+resource translator 'Microsoft.CognitiveServices/accounts@2023-05-01' = {
+  name: translatorName
+  location: location
+  kind: 'TextTranslation'
+  sku: {
+    name: 'F0'
+  }
+  properties: {
+    customSubDomainName: translatorName
+  }
+}
+
 resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: planName
   location: location
@@ -207,6 +221,9 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'ACS_CONNECTION_STRING', value: acs.listKeys().primaryConnectionString }
         // Azure-managed domain's actual sender address is only known after provisioning; deploy.ps1 sets this after the fact.
         { name: 'ACS_SENDER_ADDRESS', value: '' }
+        { name: 'AZURE_TRANSLATOR_ENDPOINT', value: translator.properties.endpoint }
+        { name: 'AZURE_TRANSLATOR_KEY', value: translator.listKeys().key1 }
+        { name: 'AZURE_TRANSLATOR_REGION', value: location }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
         { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false' }
         { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '0' }

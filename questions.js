@@ -26,7 +26,13 @@ function writeStore(store) {
 }
 
 function publicQuestion(question) {
-  return { id: question.id, text: question.text };
+  return {
+    id: question.id,
+    text: question.text,
+    language: question.language,
+    // Defaults to the question's own id when it has no linked translation.
+    translationGroupId: question.translationGroupId || question.id,
+  };
 }
 
 function createQuestionService({ now = () => Date.now() } = {}) {
@@ -41,7 +47,7 @@ function createQuestionService({ now = () => Date.now() } = {}) {
       .map(publicQuestion);
   }
 
-  function addQuestion(language, text) {
+  function addQuestion(language, text, translationGroupId) {
     if (!supportedLanguages.has(language)) {
       return { error: 'Unsupported language.' };
     }
@@ -55,11 +61,13 @@ function createQuestionService({ now = () => Date.now() } = {}) {
     }
 
     const store = readStore();
+    const id = crypto.randomUUID();
     const question = {
-      id: crypto.randomUUID(),
+      id,
       language,
       text: trimmed,
       createdAt: now(),
+      translationGroupId: translationGroupId || id,
     };
     store.questions.push(question);
     writeStore(store);
@@ -77,7 +85,17 @@ function createQuestionService({ now = () => Date.now() } = {}) {
     return true;
   }
 
-  return { listQuestions, addQuestion, deleteQuestion };
+  function getQuestionById(id) {
+    const store = readStore();
+    const question = store.questions.find((entry) => entry.id === id);
+    return question ? publicQuestion(question) : null;
+  }
+
+  return { listQuestions, addQuestion, deleteQuestion, getQuestionById };
 }
 
-export { createQuestionService, minQuestionLength, maxQuestionLength };
+function otherSupportedLanguages(language) {
+  return [...supportedLanguages].filter((code) => code !== language);
+}
+
+export { createQuestionService, minQuestionLength, maxQuestionLength, supportedLanguages, otherSupportedLanguages };

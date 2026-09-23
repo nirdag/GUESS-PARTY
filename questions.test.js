@@ -59,4 +59,26 @@ describe('questions.js: createQuestionService', () => {
     const service = createQuestionService();
     expect(service.deleteQuestion('not-a-real-id')).toBe(false);
   });
+
+  it('addQuestion defaults translationGroupId to its own id when not linked', () => {
+    const service = createQuestionService();
+    const added = service.addQuestion('en', 'A standalone question here?');
+    expect(added.question.translationGroupId).toBe(added.question.id);
+    expect(added.question.language).toBe('en');
+  });
+
+  it('addQuestion links translationGroupId to a source question when provided', () => {
+    const service = createQuestionService();
+    const original = service.addQuestion('en', 'What is your favorite season?');
+    const translated = service.addQuestion('he', 'מה העונה המועדפת עליך?', original.question.translationGroupId);
+    expect(translated.question.translationGroupId).toBe(original.question.translationGroupId);
+    expect(translated.question.translationGroupId).not.toBe(translated.question.id);
+  });
+
+  it('getQuestionById returns the public shape for a known id and null otherwise', () => {
+    const service = createQuestionService();
+    const added = service.addQuestion('en', 'Where would you go on vacation?');
+    expect(service.getQuestionById(added.question.id)).toEqual(added.question);
+    expect(service.getQuestionById('not-a-real-id')).toBeNull();
+  });
 });

@@ -9,9 +9,10 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { createAuthService } from './auth.js';
 import { isAdminEmail } from './admins.js';
-import { createQuestionService, minQuestionLength, maxQuestionLength } from './questions.js';
+import { createQuestionService, minQuestionLength, maxQuestionLength, otherSupportedLanguages } from './questions.js';
 import { createUserQuestionService } from './userQuestions.js';
 import { sendVerificationEmail } from './emailService.js';
+import { translateText } from './translationService.js';
 import { logger } from './logger.js';
 
 if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
@@ -1518,13 +1519,36 @@ app.get('/questions', (req, res) => {
 });
 
 app.post('/admin/questions', requireAdmin, (req, res) => {
-  const result = questionService.addQuestion(req.body?.language, req.body?.text);
+  const result = questionService.addQuestion(req.body?.language, req.body?.text, req.body?.translationGroupId);
   if (result.error) {
     res.status(400).json({ error: result.error });
     return;
   }
-  logger.event('admin-question-added', { language: req.body?.language });
+  const isLinkedTranslation = Boolean(req.body?.translationGroupId) && req.body.translationGroupId !== result.question.id;
+  logger.event('admin-question-added', { language: req.body?.language, isLinkedTranslation });
   res.status(201).json({ question: result.question });
+});
+
+app.post('/admin/questions/translate-preview', requireAdmin, async (req, res) => {
+  const source = questionService.getQuestionById(req.body?.id);
+  if (!source) {
+    res.status(404).json({ error: 'Question not found.' });
+    return;
+  }
+
+  const [targetLanguage] = otherSupportedLanguages(source.language);
+  if (!targetLanguage) {
+    res.status(400).json({ error: 'No other supported language to translate into.' });
+    return;
+  }
+
+  const result = await translateText(source.text, source.language, targetLanguage);
+  if (result.error) {
+    res.status(502).json({ error: result.error });
+    return;
+  }
+
+  res.json({ targetLanguage, translatedText: result.text });
 });
 
 app.delete('/admin/questions/:id', requireAdmin, (req, res) => {
