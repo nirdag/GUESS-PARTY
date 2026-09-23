@@ -312,6 +312,16 @@ function normalizeGuessFlowMode(value) {
   return value === 'allAtOnce' ? 'allAtOnce' : 'sequential';
 }
 
+// Fisher-Yates - unlike `.sort(() => Math.random() - 0.5)`, this is an unbiased shuffle (matters most for small N).
+function shuffle(array) {
+  const result = [...array];
+  for (let i = result.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
+
 // All non-asker players take part in matching (host included only when hostIsPlayer put them in room.players).
 function getEligibleMatcherIds(room) {
   return room.players.filter((player) => player.id !== room.askingPlayerId).map((player) => player.id);
@@ -436,9 +446,11 @@ function calculateAllAtOnceScores(room) {
 
 // Builds the single combined matching round for a question in allAtOnce mode (replaces the per-answer answerQueue flow).
 function buildMatchingBoard(room) {
-  room.matchingBoard = room.answers
-    .map((answer) => ({ slotId: crypto.randomUUID(), text: answer.text, authorId: answer.playerId }))
-    .sort(() => Math.random() - 0.5);
+  room.matchingBoard = shuffle(
+    room.answers.map((answer) => ({ slotId: crypto.randomUUID(), text: answer.text, authorId: answer.playerId })),
+  );
+  // Shuffled independently from the slot order above, so the name-token pool never lines up 1:1 with the answers.
+  room.matchingTokenOrder = shuffle(room.matchingBoard.map((slot) => slot.authorId));
   room.matches = [];
   room.matchingConfirmedIds = [];
   room.answerQueue = [];
@@ -533,8 +545,9 @@ function makeRoomState(room, viewerPlayerId = null) {
         ? { slotId: slot.slotId, text: slot.text }
         : { slotId: slot.slotId, text: slot.text, authorId: slot.authorId }
     )),
-    // The name-token pool (who wrote an answer this round) - same visibility as remainingAuthorIds above.
-    matchingAuthorIds: (room.matchingBoard || []).map((slot) => slot.authorId),
+    // The name-token pool (who wrote an answer this round) - independently shuffled from matchingBoard's slot
+    // order (see buildMatchingBoard), so token position never reveals the correct slot by alignment.
+    matchingAuthorIds: room.matchingTokenOrder || [],
     myMatches: (room.matches || [])
       .filter((match) => match.guesserId === viewerPlayerId)
       .map((match) => ({ slotId: match.slotId, guessedId: match.guessedId, guessedName: match.guessedName })),
@@ -739,6 +752,7 @@ function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvata
     roundEndConfirmedIds: [],
     guessFlowMode: normalizeGuessFlowMode(guessFlowMode),
     matchingBoard: [],
+    matchingTokenOrder: [],
     matches: [],
     matchingConfirmedIds: [],
   };
@@ -937,7 +951,7 @@ function startRound(room, customQuestion = '') {
       if (!canStartGame(room)) {
         return;
       }
-      room.questionPool = [...room.poolQuestions].sort(() => Math.random() - 0.5);
+      room.questionPool = shuffle(room.poolQuestions);
       room.currentPoolQuestionIndex = 0;
       trimmedQuestion = room.questionPool[0]?.text || '';
     }
@@ -973,6 +987,7 @@ function startRound(room, customQuestion = '') {
   room.timeLeft = 0;
   room.finalMatchup = null;
   room.matchingBoard = [];
+  room.matchingTokenOrder = [];
   room.matches = [];
 
   room.players.forEach((player) => {
@@ -1026,6 +1041,7 @@ function continueToNextQuestion(room) {
   room.roundResults = [];
   room.finalMatchup = null;
   room.matchingBoard = [];
+  room.matchingTokenOrder = [];
   room.matches = [];
 
   broadcastRoom(room);
@@ -1050,6 +1066,7 @@ function startNewGame(room) {
   room.roundResults = [];
   room.finalMatchup = null;
   room.matchingBoard = [];
+  room.matchingTokenOrder = [];
   room.matches = [];
   room.poolQuestions = [];
   room.questionPool = [];
@@ -2074,6 +2091,7 @@ export {
   hasAllRoundEndConfirmed,
   canConfirmNextRound,
   normalizeGuessFlowMode,
+  shuffle,
   getEligibleMatcherIds,
   isMatchingComplete,
   canSubmitMatch,

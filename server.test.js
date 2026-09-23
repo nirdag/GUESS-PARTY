@@ -49,6 +49,7 @@ import {
   hasAllRoundEndConfirmed,
   canConfirmNextRound,
   normalizeGuessFlowMode,
+  shuffle,
   getEligibleMatcherIds,
   isMatchingComplete,
   canSubmitMatch,
@@ -2095,6 +2096,41 @@ describe('HIGH: All-at-once guessing mode', () => {
     expect(room.matchingBoard).toHaveLength(3);
     const authorIds = room.matchingBoard.map((slot) => slot.authorId).sort();
     expect(authorIds).toEqual([alice.id, bob.id, charlie.id].sort());
+  });
+
+  it('lockAnswers shuffles matchingTokenOrder independently of matchingBoard slot order', () => {
+    // A single 3-element trial has a non-trivial 1/6 chance of coincidentally matching by pure luck,
+    // so sample several independent rooms and require at least one mismatch to avoid test flakiness.
+    const mismatches = Array.from({ length: 10 }, () => {
+      const { room } = setUpMatchingRoom();
+      const slotAuthorOrder = room.matchingBoard.map((slot) => slot.authorId);
+      return JSON.stringify(room.matchingTokenOrder) !== JSON.stringify(slotAuthorOrder);
+    });
+
+    expect(mismatches.some(Boolean)).toBe(true);
+  });
+
+  it('matchingTokenOrder always contains the exact same author ids as the matchingBoard, just reordered', () => {
+    const { room, alice, bob, charlie } = setUpMatchingRoom();
+
+    expect(room.matchingTokenOrder).toHaveLength(3);
+    expect([...room.matchingTokenOrder].sort()).toEqual([alice.id, bob.id, charlie.id].sort());
+  });
+
+  it('makeRoomState exposes matchingAuthorIds from matchingTokenOrder, not the raw slot order', () => {
+    const { room } = setUpMatchingRoom();
+
+    const state = makeRoomState(room);
+    expect(state.matchingAuthorIds).toEqual(room.matchingTokenOrder);
+  });
+
+  it('shuffle() returns a new array with the same elements, without mutating the input', () => {
+    const input = ['a', 'b', 'c', 'd', 'e'];
+    const result = shuffle(input);
+
+    expect(input).toEqual(['a', 'b', 'c', 'd', 'e']);
+    expect(result).not.toBe(input);
+    expect([...result].sort()).toEqual([...input].sort());
   });
 
   it('makeRoomState withholds authorId while matching is live but reveals it afterwards', () => {
