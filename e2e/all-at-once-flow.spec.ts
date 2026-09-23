@@ -128,7 +128,23 @@ test('all-at-once guessing mode: full matching board flow with rank-based scorin
     const totalScore = scoreTexts.reduce((sum, text) => sum + Number(text.replace(/\D/g, '')), 0)
     expect(totalScore).toBe(18)
 
-    for (const client of [host, alice, bob, carol]) {
+    // Results are grouped by guesser: every player starts on their own three guesses and sees their round total.
+    const resultTabs = alice.page.locator('[data-role="all-at-once-result-tab"]')
+    await expect(resultTabs).toHaveCount(3)
+    await expect(resultTabs.filter({ hasText: alice.name })).toHaveAttribute('aria-selected', 'true')
+    await expect(alice.page.locator('.all-at-once-results-panel .result-row')).toHaveCount(3)
+    await expect(alice.page.locator('.all-at-once-results-total strong')).toHaveText('9 pts')
+
+    await resultTabs.filter({ hasText: bob.name }).click()
+    await expect(resultTabs.filter({ hasText: bob.name })).toHaveAttribute('aria-selected', 'true')
+    await expect(alice.page.locator('.all-at-once-results-panel .result-row')).toHaveCount(3)
+    await expect(alice.page.locator('.all-at-once-results-total strong')).toHaveText('6 pts')
+
+    // Another player's confirmation broadcasts room state, but must not reset Alice's selected result tab.
+    await host.page.locator('[data-role="confirm-next-round"]').click()
+    await expect(resultTabs.filter({ hasText: bob.name })).toHaveAttribute('aria-selected', 'true')
+
+    for (const client of [alice, bob, carol]) {
       await client.page.locator('[data-role="confirm-next-round"]').click()
     }
 

@@ -420,6 +420,7 @@ function calculateAllAtOnceScores(room) {
     const slot = room.matchingBoard.find((entry) => entry.slotId === match.slotId);
     const guesser = findPlayerById(room, match.guesserId);
     return {
+      guesserId: match.guesserId,
       guesserName: guesser ? guesser.name : '',
       guessedName: match.guessedName,
       correct: Boolean(slot) && match.guessedId === slot.authorId,

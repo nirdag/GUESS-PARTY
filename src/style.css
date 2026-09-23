@@ -440,7 +440,8 @@ h1 {
 
 @media (prefers-reduced-motion: reduce) {
   .waiting-for-host,
-  .start-round-button {
+  .start-round-button,
+  .confirm-next-question-button {
     animation: none;
   }
 }
@@ -469,7 +470,22 @@ h1 {
   animation: start-round-blink 1.2s ease-in-out infinite;
 }
 
+.confirm-next-question-button {
+  animation: confirm-next-question-blink 1.2s ease-in-out infinite;
+}
+
 @keyframes start-round-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes confirm-next-question-blink {
   0%,
   100% {
     opacity: 1;
@@ -592,6 +608,58 @@ h1 {
 .result-list {
   display: grid;
   gap: 12px;
+}
+
+.all-at-once-results-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 2px 8px;
+  scrollbar-color: var(--border) transparent;
+}
+
+.all-at-once-results-tab {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-alt);
+  color: var(--muted);
+  padding: 9px 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.all-at-once-results-tab:hover,
+.all-at-once-results-tab.active {
+  border-color: rgba(124, 156, 255, 0.7);
+  background: rgba(124, 156, 255, 0.16);
+  color: white;
+}
+
+.all-at-once-results-tab:focus-visible {
+  outline: 2px solid var(--secondary);
+  outline-offset: 2px;
+}
+
+.all-at-once-results-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.all-at-once-results-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-inline-start: 3px solid var(--secondary);
+  background: rgba(124, 156, 255, 0.08);
+  color: var(--muted);
+}
+
+.all-at-once-results-total strong {
+  color: white;
+  white-space: nowrap;
 }
 
 .player-list {

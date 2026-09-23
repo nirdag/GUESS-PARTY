@@ -80,6 +80,7 @@ type GuessRecord = {
 }
 
 type RoundResult = {
+  guesserId?: string
   guesserName: string
   guessedName: string
   correct: boolean
@@ -247,6 +248,7 @@ const state = {
   // Tracks whether the result overlay/sound already fired for the current round-end instance, since
   // renderRoundEnd() re-renders on every broadcast (e.g. other players confirming next round).
   roundEndOverlayShown: false,
+  selectedAllAtOnceResultsPlayerId: null as string | null,
   answerRoundNumber: 0,
   question: '',
   questionAuthorName: null as string | null,
@@ -729,6 +731,12 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   // subsequent re-render caused by other players confirming next round.
   if (state.screen === 'round-end' && previousScreen !== 'round-end') {
     state.roundEndOverlayShown = false
+    const resultPlayerIds = state.roundResults
+      .map((result) => result.guesserId)
+      .filter((playerId): playerId is string => Boolean(playerId))
+    state.selectedAllAtOnceResultsPlayerId = resultPlayerIds.includes(state.currentPlayerId)
+      ? state.currentPlayerId
+      : resultPlayerIds[0] ?? null
   }
 
   // Only clear the tap-to-place selection when freshly entering the board, not on every broadcast from other players.
@@ -3146,6 +3154,58 @@ function startMatchingTokenPointer(event: PointerEvent, tokenEl: HTMLButtonEleme
   window.addEventListener('pointerup', onUp)
 }
 
+function renderAllAtOnceResultsTabs(): string {
+  const resultPlayerIds = [...new Set(
+    state.roundResults
+      .map((result) => result.guesserId)
+      .filter((playerId): playerId is string => Boolean(playerId)),
+  )]
+  const activePlayerId = resultPlayerIds.includes(state.selectedAllAtOnceResultsPlayerId ?? '')
+    ? state.selectedAllAtOnceResultsPlayerId!
+    : resultPlayerIds[0]
+  const activePlayer = state.players.find((player) => player.id === activePlayerId)
+  const activeResults = state.roundResults.filter((result) => result.guesserId === activePlayerId)
+  const totalPoints = activeResults.reduce((total, result) => total + result.points, 0)
+
+  if (!activePlayerId || !activePlayer) {
+    return ''
+  }
+
+  return `
+    <div class="all-at-once-results-tabs" role="tablist" aria-label="${t('roundEnd.results')}">
+      ${resultPlayerIds
+        .map((playerId) => {
+          const player = state.players.find((entry) => entry.id === playerId)
+          if (!player) {
+            return ''
+          }
+          const isActive = playerId === activePlayerId
+          return `<button class="all-at-once-results-tab ${isActive ? 'active' : ''}" type="button" role="tab" aria-selected="${isActive}" data-role="all-at-once-result-tab" data-player-id="${playerId}">${formatPlayerAvatar(player)} ${player.name}</button>`
+        })
+        .join('')}
+    </div>
+
+    <div class="all-at-once-results-panel" role="tabpanel">
+      <div class="all-at-once-results-total">
+        <span>${t('roundEnd.pointsThisRound')}</span>
+        <strong>${formatScore(totalPoints)}</strong>
+      </div>
+      <div class="result-list">
+        ${activeResults
+          .map(
+            (result) => `
+              <div class="result-row ${result.correct ? 'success' : 'fail'}">
+                <span>${t('roundEnd.guessedPlayer', { guessed: result.guessedName })}</span>
+                <strong>${result.correct ? t('roundEnd.pointsEarned', { points: result.points }) : t('roundEnd.noPoints')}</strong>
+              </div>
+            `,
+          )
+          .join('')}
+      </div>
+    </div>
+  `
+}
+
 function renderRoundEnd(): void {
   const sortedPlayers = [...state.players].sort((a, b) => b.score - a.score)
   const roundsLeft = state.finalMatchup ? 0 : Math.max(0, state.answers.length - state.answerRoundNumber - 1)
@@ -3181,6 +3241,7 @@ function renderRoundEnd(): void {
   const confirmLabel = state.questionPoolMode
     ? isLastPoolQuestion ? t('roundEnd.confirmGoToFinalBoard') : t('roundEnd.confirmNextQuestion')
     : isLastRound ? t('roundEnd.confirmGoToFinalBoard') : t('roundEnd.confirmNextRound')
+  const confirmButtonClass = state.questionPoolMode && !isLastPoolQuestion ? 'confirm-next-question-button' : ''
   const waitingMessage = pendingConfirmers.length > 0
     ? t('roundEnd.waitingForConfirmations', { players: pendingConfirmers.map((confirmer) => `${formatPlayerAvatar(confirmer)} ${confirmer.name}`).join(', ') })
     : t('roundEnd.allConfirmed')
@@ -3264,6 +3325,8 @@ function renderRoundEnd(): void {
 
         ${state.finalMatchup?.autoRevealed
           ? `<div class="mini-card"><span>${t('finalMatchup.autoRevealed')}</span></div>`
+          : state.guessFlowMode === 'allAtOnce'
+            ? renderAllAtOnceResultsTabs()
           : `
             <div class="result-list">
               ${state.roundResults
@@ -3292,7 +3355,7 @@ function renderRoundEnd(): void {
 
         ${hasIConfirmed
           ? `<div class="mini-card"><span>${t('roundEnd.youConfirmed')}</span></div>`
-          : `<button class="primary-button next-round" type="button" data-role="confirm-next-round">${confirmLabel}</button>`}
+          : `<button class="primary-button next-round ${confirmButtonClass}" type="button" data-role="confirm-next-round">${confirmLabel}</button>`}
 
         ${state.role === 'host'
           ? `<button class="secondary-button" type="button" data-role="force-advance-round">${t('roundEnd.forceAdvance')}</button>`
@@ -3314,6 +3377,13 @@ function renderRoundEnd(): void {
 
   root.querySelector<HTMLButtonElement>('[data-role="force-advance-round"]')?.addEventListener('click', () => {
     forceAdvanceRound()
+  })
+
+  root.querySelectorAll<HTMLButtonElement>('[data-role="all-at-once-result-tab"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.selectedAllAtOnceResultsPlayerId = button.dataset.playerId ?? null
+      renderApp()
+    })
   })
 
   wireSuggestionPanels()

@@ -2173,6 +2173,7 @@ describe('HIGH: All-at-once guessing mode', () => {
     expect(bob.score).toBe(9);
     expect(charlie.score).toBe(6);
     expect(dave.score).toBe(3);
+    expect(room.roundResults.every((result) => typeof result.guesserId === 'string')).toBe(true);
     expect(room.phase).toBe('round-end');
     vi.useRealTimers();
   });
