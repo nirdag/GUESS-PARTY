@@ -1,6 +1,6 @@
 {
   "common.playingAs": "Playing as",
-  "common.host": "Host only",
+  "common.host": "Host not playing",
   "common.hostAndPlayer": "Host & Player",
   "common.guessFlowSequential": "Sequential",
   "common.guessFlowAllAtOnce": "All at once",

@@ -1,6 +1,6 @@
 {
   "common.playingAs": "משחק בתור",
-  "common.host": "מנחה בלבד",
+  "common.host": "מנחה לא משחק",
   "common.hostAndPlayer": "מנחה ושחקן",
   "common.guessFlowSequential": "אחד אחרי השני",
   "common.guessFlowAllAtOnce": "הכל בבת אחת",

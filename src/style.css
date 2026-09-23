@@ -1340,10 +1340,39 @@ h1 {
   background: rgba(248, 113, 113, 0.04);
 }
 
+.rules-panel summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.rules-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.rules-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.rules-summary h2 {
+  font-size: 1.2rem;
+}
+
+.rules-chevron {
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+
+.rules-panel[open] .rules-chevron {
+  transform: rotate(90deg);
+}
+
 .rules-list {
   display: grid;
   gap: 12px;
-  margin-top: 8px;
+  margin-top: 14px;
 }
 
 .rule-item {

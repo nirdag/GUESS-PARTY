@@ -313,6 +313,7 @@ const state = {
   myGalleryError: '',
   showRoomSharingPanel: false,
   showManagePlayersPanel: false,
+  rulesPanelOpen: false,
   roomCodePrefilledFromUrl: false,
   finalMatchup: null as FinalMatchup | null,
   guessFlowMode: 'sequential' as GuessFlowMode,
@@ -2398,6 +2399,23 @@ function wireQuestionPoolPanels(): void {
   })
 }
 
+// Collapsed by default; open state is tracked so it survives the full re-render renderLobby() triggers on every update.
+function renderRulesPanel(heading: string, rules: string[]): string {
+  return `
+    <section class="panel">
+      <details class="rules-panel" ${state.rulesPanelOpen ? 'open' : ''}>
+        <summary class="rules-summary">
+          <h2>${heading}</h2>
+          <span class="rules-chevron">▸</span>
+        </summary>
+        <div class="rules-list">
+          ${rules.map((rule, index) => `<div class="rule-item"><strong>${index + 1}.</strong><span>${rule}</span></div>`).join('')}
+        </div>
+      </details>
+    </section>
+  `
+}
+
 function renderLobby(): void {
   const leaderboard = [...state.players].sort((a, b) => b.score - a.score)
   const hostQuestionIsValid = state.customQuestion.trim().length >= 8
@@ -2474,17 +2492,12 @@ function renderLobby(): void {
           ${state.role === 'host' ? renderHostQuestionModerationPanel() : ''}
           ${state.role !== 'host' || state.hostIsPlayer ? renderQuestionPoolGatheringPanel() : ''}
 
-          <section class="panel">
-            <div class="section-head">
-              <h2>${t('lobby.roomRules')}</h2>
-            </div>
-            <div class="rules-list">
-              <div class="rule-item"><strong>1.</strong><span>${state.role === 'host' ? t('lobby.poolRulesHost') : t('lobby.poolRulesPlayer')}</span></div>
-              <div class="rule-item"><strong>2.</strong><span>${t('lobby.playerRule2')}</span></div>
-              <div class="rule-item"><strong>3.</strong><span>${t('lobby.playerRule3')}</span></div>
-              <div class="rule-item"><strong>4.</strong><span>${t('lobby.playerRule4')}</span></div>
-            </div>
-          </section>
+          ${renderRulesPanel(t('lobby.roomRules'), [
+            state.role === 'host' ? t('lobby.poolRulesHost') : t('lobby.poolRulesPlayer'),
+            t('lobby.playerRule2'),
+            t('lobby.playerRule3'),
+            t('lobby.playerRule4'),
+          ])}
         `
         : isAsker
           ? `
@@ -2508,27 +2521,22 @@ function renderLobby(): void {
               ${state.showQuestionGallery ? renderGalleryPanel() : ''}
 
               ${state.allowPlayerSuggestions ? renderSuggestionsPanel() : ''}
-
-              <div class="rules-list">
-                <div class="rule-item"><strong>1.</strong><span>${t(`lobby.${ruleKeyPrefix}Rule1`)}</span></div>
-                <div class="rule-item"><strong>2.</strong><span>${t(`lobby.${ruleKeyPrefix}Rule2`)}</span></div>
-                <div class="rule-item"><strong>3.</strong><span>${t(`lobby.${ruleKeyPrefix}Rule3`)}</span></div>
-                <div class="rule-item"><strong>4.</strong><span>${t(`lobby.${ruleKeyPrefix}Rule4`)}</span></div>
-              </div>
             </section>
+
+            ${renderRulesPanel(t('lobby.roomRules'), [
+              t(`lobby.${ruleKeyPrefix}Rule1`),
+              t(`lobby.${ruleKeyPrefix}Rule2`),
+              t(`lobby.${ruleKeyPrefix}Rule3`),
+              t(`lobby.${ruleKeyPrefix}Rule4`),
+            ])}
             `
           : `
-            <section class="panel">
-              <div class="section-head">
-                <h2>${t('lobby.roomRules')}</h2>
-              </div>
-              <div class="rules-list">
-                <div class="rule-item"><strong>1.</strong><span>${t('lobby.playerRule1')}</span></div>
-                <div class="rule-item"><strong>2.</strong><span>${t('lobby.playerRule2')}</span></div>
-                <div class="rule-item"><strong>3.</strong><span>${t('lobby.playerRule3')}</span></div>
-                <div class="rule-item"><strong>4.</strong><span>${t('lobby.playerRule4')}</span></div>
-              </div>
-            </section>
+            ${renderRulesPanel(t('lobby.roomRules'), [
+              t('lobby.playerRule1'),
+              t('lobby.playerRule2'),
+              t('lobby.playerRule3'),
+              t('lobby.playerRule4'),
+            ])}
             ${state.allowPlayerSuggestions && state.role === 'player' ? renderSuggestQuestionPanel() : ''}
             `}
 
@@ -2574,6 +2582,12 @@ function renderLobby(): void {
       })
     }
   }
+
+  root.querySelectorAll<HTMLDetailsElement>('details.rules-panel').forEach((details) => {
+    details.addEventListener('toggle', () => {
+      state.rulesPanelOpen = details.open
+    })
+  })
 
   root.querySelector('[data-role="toggle-share-room"]')?.addEventListener('click', () => {
     state.showRoomSharingPanel = !state.showRoomSharingPanel
