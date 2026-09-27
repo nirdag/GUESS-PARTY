@@ -1,12 +1,10 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { minQuestionLength, maxQuestionLength } from './questions.js';
+import { minQuestionLength, maxQuestionLength, supportedLanguages } from './questions.js';
 
 const dataDirectory = process.env.GUESS_PARTY_DATA_DIR || path.join(process.cwd(), '.data');
 const dataFile = path.join(dataDirectory, 'user-questions.json');
-const supportedLanguages = new Set(['en', 'he']);
-
 function emptyStore() {
   return { userQuestions: [] };
 }

@@ -1,6 +1,4 @@
 // Translates admin gallery questions via Azure AI Translator when configured; otherwise no-ops (caller shows a warning).
-const languageNames = { en: 'English', he: 'Hebrew' };
-
 async function translateText(text, sourceLanguage, targetLanguage) {
   const endpoint = process.env.AZURE_TRANSLATOR_ENDPOINT;
   const key = process.env.AZURE_TRANSLATOR_KEY;
@@ -39,4 +37,4 @@ async function translateText(text, sourceLanguage, targetLanguage) {
   }
 }
 
-export { translateText, languageNames };
+export { translateText };

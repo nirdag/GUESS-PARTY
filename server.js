@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { createAuthService } from './auth.js';
 import { isAdminEmail } from './admins.js';
-import { createQuestionService, minQuestionLength, maxQuestionLength, otherSupportedLanguages } from './questions.js';
+import { createQuestionService, minQuestionLength, maxQuestionLength, getTranslationTargetError, supportedLanguages } from './questions.js';
 import { createUserQuestionService } from './userQuestions.js';
 import { sendVerificationEmail } from './emailService.js';
 import { translateText } from './translationService.js';
@@ -74,7 +74,6 @@ const questionBank = [
 
 const rooms = new Map();
 const reconnectGracePeriodMs = 30 * 60 * 1000;
-const supportedLanguages = new Set(['en', 'he']);
 const GUESS_TIMEOUT_SECONDS = 20;
 const MIN_GUESS_TIMEOUT_SECONDS = 20;
 const MAX_GUESS_TIMEOUT_SECONDS = 60;
@@ -1536,9 +1535,11 @@ app.post('/admin/questions/translate-preview', requireAdmin, async (req, res) =>
     return;
   }
 
-  const [targetLanguage] = otherSupportedLanguages(source.language);
-  if (!targetLanguage) {
-    res.status(400).json({ error: 'No other supported language to translate into.' });
+  const targetLanguage = req.body?.targetLanguage;
+  const group = questionService.getTranslationGroup(source.translationGroupId);
+  const targetError = getTranslationTargetError(source.language, targetLanguage, group);
+  if (targetError) {
+    res.status(400).json({ error: targetError });
     return;
   }
 
@@ -1549,6 +1550,16 @@ app.post('/admin/questions/translate-preview', requireAdmin, async (req, res) =>
   }
 
   res.json({ targetLanguage, translatedText: result.text });
+});
+
+app.delete('/admin/questions/group/:translationGroupId', requireAdmin, (req, res) => {
+  const deleted = questionService.deleteTranslationGroup(req.params.translationGroupId);
+  if (!deleted) {
+    res.status(404).json({ error: 'Question group not found.' });
+    return;
+  }
+  logger.event('admin-question-group-deleted', { translationGroupId: req.params.translationGroupId });
+  res.status(204).end();
 });
 
 app.delete('/admin/questions/:id', requireAdmin, (req, res) => {

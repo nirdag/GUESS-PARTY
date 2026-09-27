@@ -182,7 +182,7 @@
   "adminGallery.translationNotConfiguredWarning": "התרגום אינו זמין כרגע. ניתן להקליד את התרגום ידנית למטה.",
   "adminGallery.saveTranslation": "שמור תרגום",
   "adminGallery.cancelTranslation": "בטל",
-  "adminGallery.deleteLinkedPrompt": "לשאלה זו יש תרגום מקושר. למחוק גם אותו?",
+  "adminGallery.deleteLinkedPrompt": "מחיקת השאלה הזו תמחק גם תרגומים מקושרים, אם קיימים. להמשיך?",
   "hostSetup.guestHostHint": "התחבר כדי לשמור מאגר שאלות פרטי לחדרים שלך.",
   "myGallery.title": "השאלות שלי",
   "myGallery.questionTextLabel": "טקסט השאלה",

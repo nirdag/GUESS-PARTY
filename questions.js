@@ -61,13 +61,19 @@ function createQuestionService({ now = () => Date.now() } = {}) {
     }
 
     const store = readStore();
+    const groupId = translationGroupId || null;
+    if (groupId && store.questions.some((question) =>
+      (question.translationGroupId || question.id) === groupId && question.language === language)) {
+      return { error: 'A question already exists for this language in the translation group.' };
+    }
+
     const id = crypto.randomUUID();
     const question = {
       id,
       language,
       text: trimmed,
       createdAt: now(),
-      translationGroupId: translationGroupId || id,
+      translationGroupId: groupId || id,
     };
     store.questions.push(question);
     writeStore(store);
@@ -85,17 +91,52 @@ function createQuestionService({ now = () => Date.now() } = {}) {
     return true;
   }
 
+  function getTranslationGroup(translationGroupId) {
+    if (!translationGroupId) {
+      return [];
+    }
+
+    const store = readStore();
+    return store.questions
+      .filter((question) => (question.translationGroupId || question.id) === translationGroupId)
+      .map(publicQuestion);
+  }
+
+  function deleteTranslationGroup(translationGroupId) {
+    if (!translationGroupId) {
+      return false;
+    }
+
+    const store = readStore();
+    const initialLength = store.questions.length;
+    store.questions = store.questions.filter((question) => (question.translationGroupId || question.id) !== translationGroupId);
+    if (store.questions.length === initialLength) {
+      return false;
+    }
+    writeStore(store);
+    return true;
+  }
+
   function getQuestionById(id) {
     const store = readStore();
     const question = store.questions.find((entry) => entry.id === id);
     return question ? publicQuestion(question) : null;
   }
 
-  return { listQuestions, addQuestion, deleteQuestion, getQuestionById };
+  return { listQuestions, addQuestion, deleteQuestion, deleteTranslationGroup, getQuestionById, getTranslationGroup };
 }
 
-function otherSupportedLanguages(language) {
-  return [...supportedLanguages].filter((code) => code !== language);
+function getTranslationTargetError(sourceLanguage, targetLanguage, groupQuestions = []) {
+  if (!supportedLanguages.has(targetLanguage)) {
+    return 'Unsupported target language.';
+  }
+  if (targetLanguage === sourceLanguage) {
+    return 'Target language must differ from the source language.';
+  }
+  if (groupQuestions.some((question) => question.language === targetLanguage)) {
+    return 'A translation already exists for this language.';
+  }
+  return null;
 }
 
-export { createQuestionService, minQuestionLength, maxQuestionLength, supportedLanguages, otherSupportedLanguages };
+export { createQuestionService, minQuestionLength, maxQuestionLength, supportedLanguages, getTranslationTargetError };

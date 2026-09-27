@@ -300,7 +300,8 @@ const state = {
   adminError: '',
   adminLanguageFilter: 'en' as LanguageCode,
   adminQuestions: [] as AdminGalleryQuestion[],
-  adminLinkedGroupIds: new Set<string>(),
+  adminLinkedLanguagesByGroup: new Map<string, Set<LanguageCode>>(),
+  adminLinkedGroupsComplete: true,
   adminTranslatingId: '' as string,
   adminTranslationTarget: '' as LanguageCode | '',
   adminTranslationDraft: '',
@@ -1663,20 +1664,28 @@ async function fetchAdminQuestions(): Promise<void> {
     state.adminQuestions = []
   }
 
-  // Fetch the other language's groupIds too, so rows that already have a linked translation can hide the Translate button.
-  const otherLanguage = Object.keys(languages).find((code) => code !== state.adminLanguageFilter) as LanguageCode | undefined
-  if (!otherLanguage) {
-    state.adminLinkedGroupIds = new Set()
-    return
-  }
-  try {
-    const response = await fetch(buildApiUrl(`/questions?language=${otherLanguage}`), { credentials: 'include' })
+  const otherLanguages = Object.keys(languages).filter((code) => code !== state.adminLanguageFilter) as LanguageCode[]
+  const responses = await Promise.allSettled(otherLanguages.map(async (language) => {
+    const response = await fetch(buildApiUrl(`/questions?language=${language}`), { credentials: 'include' })
+    if (!response.ok) {
+      throw new Error(`Unable to load ${language} questions.`)
+    }
     const payload = await response.json()
-    const otherQuestions = (payload.questions ?? []) as AdminGalleryQuestion[]
-    state.adminLinkedGroupIds = new Set(otherQuestions.map((question) => question.translationGroupId))
-  } catch {
-    state.adminLinkedGroupIds = new Set()
-  }
+    return (payload.questions ?? []) as AdminGalleryQuestion[]
+  }))
+
+  const questionsByLanguage = [
+    ...state.adminQuestions,
+    ...responses.flatMap((result) => result.status === 'fulfilled' ? result.value : []),
+  ]
+  state.adminLinkedGroupsComplete = responses.every((result) => result.status === 'fulfilled')
+  const linkedLanguagesByGroup = new Map<string, Set<LanguageCode>>()
+  questionsByLanguage.forEach((question) => {
+    const groupLanguages = linkedLanguagesByGroup.get(question.translationGroupId) ?? new Set<LanguageCode>()
+    groupLanguages.add(question.language)
+    linkedLanguagesByGroup.set(question.translationGroupId, groupLanguages)
+  })
+  state.adminLinkedLanguagesByGroup = linkedLanguagesByGroup
 }
 
 async function fetchMyQuestions(): Promise<void> {
@@ -1926,16 +1935,28 @@ function renderAdminLogin(): void {
 }
 
 function renderAdminQuestionRow(question: AdminGalleryQuestion): string {
-  const hasLinked = state.adminLinkedGroupIds.has(question.translationGroupId)
+  const groupLanguages = state.adminLinkedLanguagesByGroup.get(question.translationGroupId) ?? new Set([question.language])
+  const hasLinked = [...groupLanguages].some((language) => language !== question.language)
+  const availableTargets = Object.values(languages).filter((language) =>
+    language.code !== question.language && !groupLanguages.has(language.code),
+  )
   const isTranslating = state.adminTranslatingId === question.id
+  const translationActions = availableTargets.length > 0
+    ? `
+      <select aria-label="${t('adminGallery.languageLabel')}" data-role="admin-translation-target" data-question-id="${question.id}">
+        ${availableTargets.map((language) => `<option value="${language.code}">${t(`languages.${language.code}`)}</option>`).join('')}
+      </select>
+      <button class="secondary-button" type="button" data-role="admin-translate-question" data-question-id="${question.id}">${t('adminGallery.translateButton')}</button>
+    `
+    : hasLinked
+      ? `<span class="chip">${t('adminGallery.linkedBadge')}</span>`
+      : ''
 
   return `
     <div class="result-row">
       <span>${question.text}</span>
       <div class="admin-question-actions">
-        ${hasLinked
-          ? `<span class="chip">${t('adminGallery.linkedBadge')}</span>`
-          : `<button class="secondary-button" type="button" data-role="admin-translate-question" data-question-id="${question.id}">${t('adminGallery.translateButton')}</button>`}
+        ${translationActions}
         <button class="ghost-button" type="button" data-role="admin-delete-question" data-question-id="${question.id}" data-linked="${hasLinked}">${t('adminGallery.deleteButton')}</button>
       </div>
     </div>
@@ -1972,8 +1993,9 @@ function cancelAdminTranslate(): void {
   state.adminTranslationLoading = false
 }
 
-async function startAdminTranslate(questionId: string): Promise<void> {
+async function startAdminTranslate(questionId: string, targetLanguage: LanguageCode): Promise<void> {
   state.adminTranslatingId = questionId
+  state.adminTranslationTarget = targetLanguage
   state.adminTranslationDraft = ''
   state.adminTranslationError = ''
   state.adminTranslationLoading = true
@@ -1984,7 +2006,7 @@ async function startAdminTranslate(questionId: string): Promise<void> {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: questionId }),
+      body: JSON.stringify({ id: questionId, targetLanguage }),
     })
     const payload = await response.json()
     if (!response.ok) {
@@ -2032,30 +2054,15 @@ async function saveAdminTranslation(): Promise<void> {
   }
 }
 
-async function deleteAdminQuestionAndMaybeLinked(questionId: string, hasLinked: boolean): Promise<void> {
+async function deleteAdminQuestionAndMaybeLinked(questionId: string): Promise<void> {
   const source = state.adminQuestions.find((question) => question.id === questionId)
-  await fetch(buildApiUrl(`/admin/questions/${questionId}`), { method: 'DELETE', credentials: 'include' })
-
-  if (!hasLinked || !source) {
+  if (!source) {
     return
   }
-
-  const otherLanguage = Object.keys(languages).find((code) => code !== state.adminLanguageFilter) as LanguageCode | undefined
-  if (!otherLanguage) {
-    return
-  }
-
-  try {
-    const response = await fetch(buildApiUrl(`/questions?language=${otherLanguage}`), { credentials: 'include' })
-    const payload = await response.json()
-    const otherQuestions = (payload.questions ?? []) as AdminGalleryQuestion[]
-    const linked = otherQuestions.find((question) => question.translationGroupId === source.translationGroupId)
-    if (linked) {
-      await fetch(buildApiUrl(`/admin/questions/${linked.id}`), { method: 'DELETE', credentials: 'include' })
-    }
-  } catch {
-    // Best-effort cleanup; the source question is already deleted regardless.
-  }
+  await fetch(buildApiUrl(`/admin/questions/group/${encodeURIComponent(source.translationGroupId)}`), {
+    method: 'DELETE',
+    credentials: 'include',
+  })
 }
 
 function renderAdminGallery(): void {
@@ -2114,10 +2121,10 @@ function renderAdminGallery(): void {
     button.addEventListener('click', async () => {
       const questionId = button.dataset.questionId ?? ''
       const hasLinked = button.dataset.linked === 'true'
-      if (hasLinked && !window.confirm(t('adminGallery.deleteLinkedPrompt'))) {
+      if ((hasLinked || !state.adminLinkedGroupsComplete) && !window.confirm(t('adminGallery.deleteLinkedPrompt'))) {
         return
       }
-      await deleteAdminQuestionAndMaybeLinked(questionId, hasLinked)
+      await deleteAdminQuestionAndMaybeLinked(questionId)
       await fetchAdminQuestions()
       renderApp()
     })
@@ -2125,7 +2132,12 @@ function renderAdminGallery(): void {
 
   root.querySelectorAll<HTMLButtonElement>('[data-role="admin-translate-question"]').forEach((button) => {
     button.addEventListener('click', () => {
-      void startAdminTranslate(button.dataset.questionId ?? '')
+      const questionId = button.dataset.questionId ?? ''
+      const targetLanguage = button.closest('.admin-question-actions')
+        ?.querySelector<HTMLSelectElement>('[data-role="admin-translation-target"]')?.value as LanguageCode | undefined
+      if (targetLanguage) {
+        void startAdminTranslate(questionId, targetLanguage)
+      }
     })
   })
 

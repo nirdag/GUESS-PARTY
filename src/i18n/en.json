@@ -182,7 +182,7 @@
   "adminGallery.translationNotConfiguredWarning": "Translation is unavailable right now. You can type the translation manually below.",
   "adminGallery.saveTranslation": "Save translation",
   "adminGallery.cancelTranslation": "Cancel",
-  "adminGallery.deleteLinkedPrompt": "This question has a linked translation. Delete that one too?",
+  "adminGallery.deleteLinkedPrompt": "Deleting this question will also delete any linked translations. Continue?",
   "hostSetup.guestHostHint": "Log in to save a private question gallery for your rooms.",
   "myGallery.title": "My questions",
   "myGallery.questionTextLabel": "Question text",

@@ -4,12 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 
 let createQuestionService;
+let getTranslationTargetError;
+let supportedLanguages;
 let tempDataDir;
 
 beforeAll(async () => {
   tempDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'guess-party-questions-'));
   process.env.GUESS_PARTY_DATA_DIR = tempDataDir;
-  ({ createQuestionService } = await import('./questions.js'));
+  ({ createQuestionService, getTranslationTargetError, supportedLanguages } = await import('./questions.js'));
 });
 
 afterAll(() => {
@@ -73,6 +75,39 @@ describe('questions.js: createQuestionService', () => {
     const translated = service.addQuestion('he', 'מה העונה המועדפת עליך?', original.question.translationGroupId);
     expect(translated.question.translationGroupId).toBe(original.question.translationGroupId);
     expect(translated.question.translationGroupId).not.toBe(translated.question.id);
+  });
+
+  it('finds and deletes every entry in a translation group across three languages', () => {
+    supportedLanguages.add('fr');
+    try {
+      const service = createQuestionService();
+      const original = service.addQuestion('en', 'What is your favorite season?');
+      service.addQuestion('he', 'מה העונה המועדפת עליך?', original.question.translationGroupId);
+      service.addQuestion('fr', 'Quelle est votre saison préférée ?', original.question.translationGroupId);
+      const unrelated = service.addQuestion('en', 'What is your favorite dessert?');
+
+      expect(service.addQuestion('fr', 'What is another favorite dessert?', original.question.translationGroupId).error).toContain('already exists');
+      expect(service.getTranslationGroup(original.question.translationGroupId)).toHaveLength(3);
+      expect(service.deleteTranslationGroup(original.question.translationGroupId)).toBe(true);
+      expect(service.getTranslationGroup(original.question.translationGroupId)).toEqual([]);
+      expect(service.getQuestionById(unrelated.question.id)).not.toBeNull();
+      expect(service.deleteTranslationGroup(original.question.translationGroupId)).toBe(false);
+    } finally {
+      supportedLanguages.delete('fr');
+    }
+  });
+
+  it('validates translation targets without assuming only two languages', () => {
+    supportedLanguages.add('fr');
+    try {
+      const group = [{ language: 'en' }, { language: 'he' }];
+      expect(getTranslationTargetError('en', 'fr', group)).toBeNull();
+      expect(getTranslationTargetError('en', 'he', group)).toContain('already exists');
+      expect(getTranslationTargetError('en', 'en', group)).toContain('differ');
+      expect(getTranslationTargetError('en', 'de', group)).toContain('Unsupported');
+    } finally {
+      supportedLanguages.delete('fr');
+    }
   });
 
   it('getQuestionById returns the public shape for a known id and null otherwise', () => {
