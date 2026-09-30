@@ -5,6 +5,7 @@ import {
   addPlayerToRoom,
   leaveRoom,
   kickPlayer,
+  getCloseRoomErrorCode,
   closeRoom,
   calculateRoundScores,
   evaluateGuess,
@@ -1001,6 +1002,14 @@ describe('HIGH: Kick Player', () => {
 });
 
 describe('HIGH: Close Room', () => {
+  it('identifies expired rooms and invalid non-host close requests', () => {
+    const room = createRoom({ hostName: 'Host' });
+
+    expect(getCloseRoomErrorCode(null, room.hostId)).toBe('ROOM_SESSION_EXPIRED');
+    expect(getCloseRoomErrorCode(room, 'not-the-host')).toBe('ROOM_SESSION_INVALID');
+    expect(getCloseRoomErrorCode(room, room.hostId)).toBeNull();
+  });
+
   function createTestSocket() {
     return {
       readyState: 1,

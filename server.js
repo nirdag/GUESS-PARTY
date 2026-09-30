@@ -896,6 +896,16 @@ function kickPlayer(room, playerId) {
   return removedPlayer;
 }
 
+function getCloseRoomErrorCode(room, playerId) {
+  if (!room) {
+    return 'ROOM_SESSION_EXPIRED';
+  }
+  if (room.hostId !== playerId) {
+    return 'ROOM_SESSION_INVALID';
+  }
+  return null;
+}
+
 function closeRoom(room) {
   if (!room || rooms.get(room.code) !== room) {
     return false;
@@ -1733,7 +1743,9 @@ wss.on('connection', (socket, request) => {
         }
 
         case 'close-room': {
-          if (!room || room.hostId !== socket.playerId) {
+          const errorCode = getCloseRoomErrorCode(room, socket.playerId);
+          if (errorCode) {
+            socket.send(JSON.stringify({ type: 'error', code: errorCode }));
             return;
           }
 
@@ -2080,6 +2092,7 @@ export {
   addPlayerToRoom,
   leaveRoom,
   kickPlayer,
+  getCloseRoomErrorCode,
   closeRoom,
   calculateRoundScores,
   evaluateGuess,

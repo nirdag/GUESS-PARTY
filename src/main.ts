@@ -1190,6 +1190,24 @@ function closeRoom(): void {
   sendSocketMessage('close-room')
 }
 
+function returnToWelcomeAfterRoomEnd(): void {
+  clearStoredRoomSession()
+  shouldRestoreRoomSession = false
+  state.screen = 'welcome'
+  state.roomCode = ''
+  state.playerName = ''
+  state.currentPlayerId = ''
+  state.players = []
+  state.hostId = ''
+  state.hostName = ''
+  state.hostAvatar = ''
+  state.roundEndConfirmedIds = []
+  state.showManagePlayersPanel = false
+  state.showRoomSharingPanel = false
+  setLanguage('en')
+  renderApp()
+}
+
 function kickPlayer(playerId: string, playerName: string): void {
   if (!playerId || !window.confirm(t('prompts.confirmKickPlayer', { name: playerName }))) {
     return
@@ -3803,28 +3821,13 @@ function connectSocket(): void {
       }
 
       if (payload.type === 'left-room') {
-        clearStoredRoomSession()
-        shouldRestoreRoomSession = false
-        state.screen = 'welcome'
-        state.roomCode = ''
-        state.playerName = ''
-        state.currentPlayerId = ''
-        state.players = []
-        renderApp()
+        returnToWelcomeAfterRoomEnd()
         return
       }
 
       if (payload.type === 'room-closed') {
-        clearStoredRoomSession()
-        shouldRestoreRoomSession = false
-        state.screen = 'welcome'
-        state.roomCode = ''
-        state.playerName = ''
-        state.currentPlayerId = ''
-        state.players = []
-        setLanguage('en')
+        returnToWelcomeAfterRoomEnd()
         window.alert(t('prompts.roomClosed'))
-        renderApp()
         return
       }
 
@@ -3839,28 +3842,14 @@ function connectSocket(): void {
       }
 
       if (payload.type === 'kicked') {
-        clearStoredRoomSession()
-        shouldRestoreRoomSession = false
-        state.screen = 'welcome'
-        state.roomCode = ''
-        state.playerName = ''
-        state.currentPlayerId = ''
-        state.players = []
-        setLanguage('en')
+        returnToWelcomeAfterRoomEnd()
         window.alert(t('prompts.kickedFromRoom'))
-        renderApp()
         return
       }
 
       if (payload.type === 'error') {
         if (payload.code === 'ROOM_SESSION_EXPIRED' || payload.code === 'ROOM_SESSION_INVALID') {
-          clearStoredRoomSession()
-          shouldRestoreRoomSession = false
-          state.screen = 'welcome'
-          state.roomCode = ''
-          state.playerName = ''
-          state.currentPlayerId = ''
-          renderApp()
+          returnToWelcomeAfterRoomEnd()
         }
         window.alert(payload.code ? t(`errors.${payload.code}`) : (payload.message || t('errors.default')))
       }
