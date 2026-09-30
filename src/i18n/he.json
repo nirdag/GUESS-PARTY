@@ -150,6 +150,7 @@
   "lobby.waitingForPlayersReady": "ממתין שכל השחקנים יאשרו מוכנות ({ready}/{total})",
   "lobby.readyToStart": "כל השחקנים מוכנים! ניתן להתחיל.",
   "lobby.needAtLeastOneQuestion": "נדרשת לפחות שאלה אחת כדי להתחיל.",
+  "lobby.needMorePlayers": "ממתין שיצטרפו לפחות {min} שחקנים (כרגע {count}).",
   "lobby.playerQuestionsCount": "{count}/3 שאלות",
   "lobby.playerReadyBadge": "מוכן",
   "lobby.playerNotReadyBadge": "כותב",

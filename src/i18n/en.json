@@ -150,6 +150,7 @@
   "lobby.waitingForPlayersReady": "Waiting for all players to confirm ready ({ready}/{total})",
   "lobby.readyToStart": "All players are ready! Ready to start.",
   "lobby.needAtLeastOneQuestion": "At least one question is needed to start.",
+  "lobby.needMorePlayers": "Waiting for at least {min} players to join (currently {count}).",
   "lobby.playerQuestionsCount": "{count}/3 questions",
   "lobby.playerReadyBadge": "Ready",
   "lobby.playerNotReadyBadge": "Writing",

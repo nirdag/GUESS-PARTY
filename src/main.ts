@@ -2450,9 +2450,14 @@ function renderLobby(): void {
   const isAsker = state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host'
   const ruleKeyPrefix = state.role === 'host' && !state.hostIsPlayer ? 'host' : 'player'
 
+  // Must mirror server.js canStartGame()'s minPlayers formula, or the button can appear enabled/blinking
+  // while the server would still reject the start-round request.
+  const minPlayersToStart = state.hostIsPlayer && !state.questionPoolMode ? 4 : 3
+  const hasEnoughPlayers = state.players.length >= minPlayersToStart
+
   const canStartRound = state.questionPoolMode
     ? Boolean(state.canStartGame)
-    : (isAsker ? hostQuestionIsValid : false)
+    : (hasEnoughPlayers && (isAsker ? hostQuestionIsValid : false))
 
   root.innerHTML = `
     <main class="shell">
@@ -2470,13 +2475,15 @@ function renderLobby(): void {
           ${state.role === 'host' || (!state.questionPoolMode && isAsker)
             ? `
               <button class="primary-button start-round-button" type="button" data-role="start-round" ${canStartRound ? '' : 'disabled'}>${t('lobby.startRound')}</button>
-              ${state.questionPoolMode
-                ? (state.poolQuestionCount < 1
-                    ? `<small class="field-hint" style="color: #f87171;">${t('lobby.needAtLeastOneQuestion')}</small>`
-                    : (!state.allPlayersReady
-                        ? `<small class="field-hint">${t('lobby.waitingForPlayersReady', { ready: state.players.filter((p) => p.ready).length, total: state.players.length })}</small>`
-                        : `<small class="field-hint" style="color: #4ade80;">${t('lobby.readyToStart')}</small>`))
-                : ''}
+              ${!hasEnoughPlayers
+                ? `<small class="field-hint" style="color: #f87171;">${t('lobby.needMorePlayers', { min: minPlayersToStart, count: state.players.length })}</small>`
+                : state.questionPoolMode
+                  ? (state.poolQuestionCount < 1
+                      ? `<small class="field-hint" style="color: #f87171;">${t('lobby.needAtLeastOneQuestion')}</small>`
+                      : (!state.allPlayersReady
+                          ? `<small class="field-hint">${t('lobby.waitingForPlayersReady', { ready: state.players.filter((p) => p.ready).length, total: state.players.length })}</small>`
+                          : `<small class="field-hint" style="color: #4ade80;">${t('lobby.readyToStart')}</small>`))
+                  : ''}
             `
             : `<div class="chip waiting-for-host">${state.questionPoolMode ? (state.allPlayersReady ? t('lobby.waitingForHost') : t('lobby.waitingForPlayersReady', { ready: state.players.filter((p) => p.ready).length, total: state.players.length })) : t('lobby.waitingForHost')}</div>`}
         </div>
