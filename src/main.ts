@@ -325,6 +325,8 @@ const state = {
   matchingConfirmed: false,
   // Tap-to-place fallback: the name token currently "picked up", awaiting a tap on a slot.
   matchingSelectedTokenId: null as string | null,
+  // Mirrors the in-progress answer textarea so re-renders triggered by other players' broadcasts don't wipe it.
+  answerDraft: '',
 }
 
 let queuedAction: (() => void) | null = null
@@ -430,6 +432,15 @@ function scheduleSocketReconnect(): void {
 
 function formatScore(value: number): string {
   return t('common.scorePts', { value })
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 function getRandomResultMessage(isCorrect: boolean): string {
@@ -755,6 +766,11 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   // Only clear the tap-to-place selection when freshly entering the board, not on every broadcast from other players.
   if (state.screen === 'matching-board' && previousScreen !== 'matching-board') {
     state.matchingSelectedTokenId = null
+  }
+
+  // Only clear the in-progress answer draft when freshly entering the screen, not on every broadcast from other players.
+  if (state.screen === 'player-answering' && previousScreen !== 'player-answering') {
+    state.answerDraft = ''
   }
 
   renderApp()
@@ -2953,7 +2969,7 @@ function renderPlayerAnswering(): void {
           : `
             <div class="answer-box">
               <label for="player-answer">${t('playerAnswering.writeAnswer')}</label>
-              <textarea id="player-answer" rows="4" placeholder="${t('playerAnswering.answerPlaceholder')}"></textarea>
+              <textarea id="player-answer" rows="4" placeholder="${t('playerAnswering.answerPlaceholder')}">${escapeHtml(state.answerDraft)}</textarea>
             </div>
 
             <button class="primary-button" type="button" data-role="submit-answer">${t('playerAnswering.submitAnswer')}</button>
@@ -2966,6 +2982,10 @@ function renderPlayerAnswering(): void {
     </main>
   `
 
+  root.querySelector<HTMLTextAreaElement>('#player-answer')?.addEventListener('input', (event) => {
+    state.answerDraft = (event.target as HTMLTextAreaElement).value
+  })
+
   root.querySelector<HTMLButtonElement>('[data-role="submit-answer"]')?.addEventListener('click', () => {
     const input = root.querySelector<HTMLTextAreaElement>('#player-answer')
     const value = input?.value.trim()
@@ -2975,6 +2995,7 @@ function renderPlayerAnswering(): void {
     }
 
     state.hasSubmittedAnswer = true
+    state.answerDraft = ''
     submitPlayerAnswer(value)
     renderApp()
   })
