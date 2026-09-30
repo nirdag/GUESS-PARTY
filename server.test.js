@@ -37,6 +37,10 @@ import {
   canSuggestQuestion,
   canDeleteSuggestion,
   canDismissSuggestion,
+  canManageHostQuestionQueue,
+  addHostQueuedQuestion,
+  removeHostQueuedQuestion,
+  moveHostQueuedQuestion,
   canSubmitPoolQuestion,
   addPoolQuestion,
   canDeletePoolQuestion,
@@ -49,6 +53,7 @@ import {
   getRoundEndConfirmerIds,
   hasAllRoundEndConfirmed,
   canConfirmNextRound,
+  canControlActiveRound,
   normalizeGuessFlowMode,
   shuffle,
   getEligibleMatcherIds,
@@ -2057,6 +2062,85 @@ describe('HIGH: Pre-game question pool mode', () => {
     // Advance round -> no more questions in pool, should transition to game-end
     advanceGuessRound(room);
     expect(room.phase).toBe('game-end');
+  });
+});
+
+describe('HIGH: Host question queue', () => {
+  it('allows only the host to add, remove, and reorder valid questions in the lobby', () => {
+    const room = createRoom({ hostName: 'Host' });
+    const alice = addPlayerToRoom(room, 'Alice');
+    expect(canManageHostQuestionQueue(room, room.hostId)).toBe(true);
+    expect(canManageHostQuestionQueue(room, alice.id)).toBe(false);
+    expect(addHostQueuedQuestion(room, alice.id, 'What is your favorite childhood game?')).toBeNull();
+    expect(addHostQueuedQuestion(room, room.hostId, 'Short?')).toBeNull();
+
+    const first = addHostQueuedQuestion(room, room.hostId, 'What is your favorite childhood game?');
+    const second = addHostQueuedQuestion(room, room.hostId, 'Which food would you eat every day?');
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(addHostQueuedQuestion(room, room.hostId, '  What is your favorite childhood game?  ')).toBeNull();
+    expect(moveHostQueuedQuestion(room, room.hostId, second.id, -1)).toBe(true);
+    expect(room.hostQuestionQueue.map((question) => question.id)).toEqual([second.id, first.id]);
+    expect(removeHostQueuedQuestion(room, alice.id, second.id)).toBeNull();
+    expect(removeHostQueuedQuestion(room, room.hostId, second.id).id).toBe(second.id);
+    expect(room.hostQuestionQueue).toEqual([first]);
+  });
+
+  it('exposes the queued questions only to the host and requires one to start', () => {
+    const room = createRoom({ hostName: 'Host' });
+    addPlayerToRoom(room, 'Alice');
+    addPlayerToRoom(room, 'Bob');
+    addPlayerToRoom(room, 'Carol');
+    expect(canStartGame(room)).toBe(false);
+
+    const question = addHostQueuedQuestion(room, room.hostId, 'What is your favorite childhood game?');
+    expect(canStartGame(room)).toBe(true);
+    expect(makeRoomState(room, room.hostId).hostQuestionQueue).toEqual([question]);
+    expect(makeRoomState(room, room.players[0].id).hostQuestionQueue).toEqual([]);
+    expect(makeRoomState(room, room.players[0].id).hostQuestionQueueCount).toBe(1);
+  });
+
+  it('keeps round controls host-only when the host also participates in queued games', () => {
+    const room = createRoom({ hostName: 'Host', addSelfAsPlayer: true });
+    const alice = addPlayerToRoom(room, 'Alice');
+    addPlayerToRoom(room, 'Bob');
+    addHostQueuedQuestion(room, room.hostId, 'What is your favorite childhood game?');
+    startRound(room);
+
+    expect(canControlActiveRound(room, room.hostId)).toBe(true);
+    expect(canControlActiveRound(room, alice.id)).toBe(false);
+  });
+
+  it('plays the queue in order with host-as-player participation, then clears it for a new game', () => {
+    const room = createRoom({ hostName: 'Host', addSelfAsPlayer: true });
+    const alice = addPlayerToRoom(room, 'Alice');
+    const bob = addPlayerToRoom(room, 'Bob');
+    const first = addHostQueuedQuestion(room, room.hostId, 'What is your favorite childhood game?');
+    const second = addHostQueuedQuestion(room, room.hostId, 'Which food would you eat every day?');
+
+    startRound(room);
+    expect(room.question).toBe(first.text);
+    expect(room.askingPlayerId).toBeNull();
+    submitAnswer(room, room.hostId, 'Host answer');
+    submitAnswer(room, alice.id, 'Alice answer');
+    submitAnswer(room, bob.id, 'Bob answer');
+    expect(room.answers).toHaveLength(3);
+
+    room.answerQueue = [];
+    room.phase = 'round-end';
+    advanceGuessRound(room);
+    expect(room.question).toBe(second.text);
+    expect(room.currentHostQuestionIndex).toBe(1);
+
+    room.answerQueue = [];
+    room.phase = 'round-end';
+    advanceGuessRound(room);
+    expect(room.phase).toBe('game-end');
+
+    startNewGame(room);
+    expect(room.hostQuestionQueue).toEqual([]);
+    expect(room.currentHostQuestionIndex).toBe(0);
+    expect(room.hostQuestionQueueStarted).toBe(false);
   });
 });
 

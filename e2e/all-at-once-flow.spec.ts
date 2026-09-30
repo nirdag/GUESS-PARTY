@@ -56,8 +56,8 @@ test('all-at-once guessing mode: full matching board flow with rank-based scorin
     const [alice, bob, carol] = clients.slice(1)
     await expect(host.page.locator('.player-list .player-pill')).toHaveCount(3)
 
-    await host.page.locator('#host-question').fill('What is the best way to spend a lazy Sunday?')
-    await host.page.locator('#host-question-form').getByRole('button', { name: 'Save question' }).click()
+    await host.page.locator('#host-queue-question').fill('What is the best way to spend a lazy Sunday?')
+    await host.page.locator('#host-question-queue-form').getByRole('button', { name: 'Add question' }).click()
     await host.page.locator('[data-role="start-round"]').click()
 
     const answers = new Map([

@@ -610,6 +610,35 @@ h1 {
   gap: 12px;
 }
 
+.host-question-queue .result-row {
+  justify-content: flex-start;
+  align-items: flex-start;
+}
+
+.host-queue-position {
+  flex: 0 0 2rem;
+  color: var(--muted);
+}
+
+.host-queue-text {
+  flex: 1 1 12rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+.host-question-queue .host-question-actions {
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.host-question-queue .host-question-actions button {
+  min-width: 40px;
+  min-height: 40px;
+  padding: 8px;
+}
+
 .all-at-once-results-tabs {
   display: flex;
   gap: 8px;

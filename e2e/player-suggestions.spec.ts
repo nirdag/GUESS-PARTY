@@ -124,8 +124,8 @@ test('players can suggest questions privately and the host can use, dismiss, wit
     await expect(host.page.locator('body')).toContainText(aliceSuggestion)
 
     await host.page.locator('[data-role="use-suggestion"]').click()
-    await expect(host.page.locator('#host-question')).toHaveValue(aliceSuggestion)
-    // Picking a suggestion only pre-fills the textarea; it must still be listed until the round actually starts.
+    await expect(host.page.locator('.host-question-queue')).toContainText(aliceSuggestion)
+    // Picking a suggestion adds it to the queue; it remains pending until the round actually starts.
     await expect(host.page.locator('body')).toContainText(aliceSuggestion)
     await checkpoint(host, 'host-used-suggestion-still-listed')
 
@@ -142,7 +142,7 @@ test('players can suggest questions privately and the host can use, dismiss, wit
     await playRoundToGameEnd(host, [alice, bob, carol])
 
     await host.page.locator('[data-role="new-game"]').click()
-    await expect(host.page.locator('#host-question')).toBeVisible()
+    await expect(host.page.locator('#host-question-queue-form')).toBeVisible()
 
     // The suggestion is gone now that its round actually started.
     await expect(host.page.locator('body')).not.toContainText(aliceSuggestion)

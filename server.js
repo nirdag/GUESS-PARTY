@@ -140,6 +140,16 @@ function canConfirmNextRound(room, playerId) {
   return Boolean(room && room.phase === 'round-end' && playerId && getRoundEndConfirmerIds(room).has(playerId));
 }
 
+function canControlActiveRound(room, playerId) {
+  if (!room || !playerId) {
+    return false;
+  }
+  if (room.questionPoolMode || room.hostQuestionQueueStarted || !room.hostIsPlayer) {
+    return room.hostId === playerId;
+  }
+  return room.askingPlayerId === playerId;
+}
+
 function publicSuggestion(suggestion) {
   return {
     id: suggestion.id,
@@ -212,6 +222,48 @@ function deletePoolQuestion(room, questionId) {
   return removed;
 }
 
+function canManageHostQuestionQueue(room, playerId) {
+  return Boolean(room && !room.questionPoolMode && room.phase === 'lobby' && playerId && room.hostId === playerId);
+}
+
+function addHostQueuedQuestion(room, playerId, text) {
+  if (!canManageHostQuestionQueue(room, playerId)) {
+    return null;
+  }
+  const trimmed = String(text || '').trim();
+  if (trimmed.length < minQuestionLength || trimmed.length > maxQuestionLength) {
+    return null;
+  }
+  if (room.hostQuestionQueue.some((question) => question.text.trim().toLowerCase() === trimmed.toLowerCase())) {
+    return null;
+  }
+
+  const question = { id: crypto.randomUUID(), text: trimmed };
+  room.hostQuestionQueue.push(question);
+  return question;
+}
+
+function removeHostQueuedQuestion(room, playerId, questionId) {
+  if (!canManageHostQuestionQueue(room, playerId) || !questionId) {
+    return null;
+  }
+  const index = room.hostQuestionQueue.findIndex((question) => question.id === questionId);
+  return index < 0 ? null : room.hostQuestionQueue.splice(index, 1)[0];
+}
+
+function moveHostQueuedQuestion(room, playerId, questionId, direction) {
+  if (!canManageHostQuestionQueue(room, playerId) || ![-1, 1].includes(direction)) {
+    return false;
+  }
+  const index = room.hostQuestionQueue.findIndex((question) => question.id === questionId);
+  const nextIndex = index + direction;
+  if (index < 0 || nextIndex < 0 || nextIndex >= room.hostQuestionQueue.length) {
+    return false;
+  }
+  [room.hostQuestionQueue[index], room.hostQuestionQueue[nextIndex]] = [room.hostQuestionQueue[nextIndex], room.hostQuestionQueue[index]];
+  return true;
+}
+
 function canDiscardPoolQuestion(room, playerId) {
   return Boolean(room && room.questionPoolMode && room.phase === 'lobby' && playerId && room.hostId === playerId);
 }
@@ -248,9 +300,7 @@ function canStartGame(room) {
   if (!room || room.phase !== 'lobby') {
     return false;
   }
-  // Must match startRound()'s own player-count thresholds, which relax the
-  // host-as-player minimum of 4 down to 3 when questionPoolMode is on.
-  const minPlayers = room.hostIsPlayer && !room.questionPoolMode ? 4 : 3;
+  const minPlayers = 3;
   if (room.players.length < minPlayers) {
     return false;
   }
@@ -262,6 +312,8 @@ function canStartGame(room) {
     if (!allPlayersReady) {
       return false;
     }
+  } else if (!room.hostQuestionQueue || room.hostQuestionQueue.length < 1) {
+    return false;
   }
   return true;
 }
@@ -528,6 +580,11 @@ function makeRoomState(room, viewerPlayerId = null) {
       ? room.suggestedQuestions.filter((entry) => entry.playerId === viewerPlayerId).map(publicSuggestion)
       : [],
     questionPoolMode: Boolean(room.questionPoolMode),
+    hostQuestionQueue: isHostViewer && !room.questionPoolMode
+      ? (room.hostQuestionQueue || []).map((question) => ({ ...question }))
+      : [],
+    hostQuestionQueueCount: room.hostQuestionQueue?.length || 0,
+    currentHostQuestionIndex: room.currentHostQuestionIndex || 0,
     // Host-only: the full pool list for inspection/moderation. Other players only see their own.
     poolQuestions: isHostViewer ? (room.poolQuestions || []).map(publicPoolQuestion) : [],
     myPoolQuestions: room.questionPoolMode
@@ -745,6 +802,9 @@ function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvata
     allowPlayerSuggestions: (addSelfAsPlayer || isQuestionPoolMode) ? false : Boolean(allowPlayerSuggestions),
     suggestedQuestions: [],
     questionPoolMode: isQuestionPoolMode,
+    hostQuestionQueue: [],
+    currentHostQuestionIndex: 0,
+    hostQuestionQueueStarted: false,
     poolQuestions: [],
     questionPool: [],
     currentPoolQuestionIndex: 0,
@@ -946,11 +1006,10 @@ function startRound(room, customQuestion = '') {
   if (room.players.length < 1) {
     return;
   }
-  // Guessing requires at least 3 submitted answers, so at least that many non-asker players are needed.
-  if (room.hostIsPlayer && !room.questionPoolMode && room.players.length < 4) {
+  if (room.hostIsPlayer && !room.questionPoolMode && !(room.hostQuestionQueue || []).length && room.players.length < 4) {
     return;
   }
-  if (!room.hostIsPlayer && room.players.length < 3) {
+  if (room.players.length < 3) {
     return;
   }
 
@@ -964,14 +1023,18 @@ function startRound(room, customQuestion = '') {
       room.questionPool = shuffle(room.poolQuestions);
       room.currentPoolQuestionIndex = 0;
       trimmedQuestion = room.questionPool[0]?.text || '';
+    } else if ((room.hostQuestionQueue || []).length > 0) {
+      room.currentHostQuestionIndex = 0;
+      room.hostQuestionQueueStarted = true;
+      trimmedQuestion = room.hostQuestionQueue[0].text;
     }
 
     room.gameStartedAt = Date.now();
     room.questionsPlayedThisGame = 0;
-    if (room.hostIsPlayer && !room.questionPoolMode) {
+    if (room.hostIsPlayer && !room.questionPoolMode && !room.hostQuestionQueueStarted) {
       room.askingPlayerId = room.hostId;
       room.lastAskerId = room.hostId;
-    } else if (room.questionPoolMode) {
+    } else if (room.questionPoolMode || room.hostQuestionQueueStarted) {
       room.askingPlayerId = null;
       room.lastAskerId = null;
     }
@@ -1081,6 +1144,9 @@ function startNewGame(room) {
   room.poolQuestions = [];
   room.questionPool = [];
   room.currentPoolQuestionIndex = 0;
+  room.hostQuestionQueue = [];
+  room.currentHostQuestionIndex = 0;
+  room.hostQuestionQueueStarted = false;
   room.hostReady = false;
   room.players.forEach((player) => {
     player.ready = false;
@@ -1282,8 +1348,15 @@ function advanceGuessRound(room) {
         return;
       }
     }
+    if (room.hostQuestionQueueStarted && (room.hostQuestionQueue || []).length > 0) {
+      room.currentHostQuestionIndex += 1;
+      if (room.currentHostQuestionIndex < room.hostQuestionQueue.length) {
+        startRound(room, room.hostQuestionQueue[room.currentHostQuestionIndex].text);
+        return;
+      }
+    }
     room.phase = 'game-end';
-    room.pendingNextAskerId = room.hostIsPlayer ? pickNextAsker(room) : null;
+    room.pendingNextAskerId = room.hostIsPlayer && !room.hostQuestionQueueStarted ? pickNextAsker(room) : null;
     room.timeLeft = 0;
     room.answerAuthorId = null;
     room.selectedAnswer = '';
@@ -1778,26 +1851,43 @@ wss.on('connection', (socket, request) => {
           break;
         }
 
+        case 'add-host-queue-question': {
+          if (!room || !addHostQueuedQuestion(room, socket.playerId, message.text)) {
+            return;
+          }
+          broadcastRoom(room);
+          break;
+        }
+
+        case 'remove-host-queue-question': {
+          if (!room || !removeHostQueuedQuestion(room, socket.playerId, message.questionId)) {
+            return;
+          }
+          broadcastRoom(room);
+          break;
+        }
+
+        case 'move-host-queue-question': {
+          if (!room || !moveHostQueuedQuestion(room, socket.playerId, message.questionId, Number(message.direction))) {
+            return;
+          }
+          broadcastRoom(room);
+          break;
+        }
+
         case 'start-round': {
-          // In host-as-player rooms without questionPoolMode, the current asker starts the round.
-          const canStartRound = room && (
-            room.questionPoolMode
-              ? room.hostId === socket.playerId
-              : (room.hostIsPlayer
-                  ? socket.playerId === room.askingPlayerId
-                  : room.hostId === socket.playerId)
-          );
+          const canStartRound = Boolean(room && room.hostId === socket.playerId);
           if (!canStartRound) {
             return;
           }
 
-          if (room.phase === 'lobby' && !canStartGame(room)) {
-            socket.send(JSON.stringify({ type: 'error', message: 'Cannot start game yet. Ensure all players are ready and at least one question is submitted.' }));
+          if (room.phase === 'lobby' && (room.questionPoolMode ? !canStartGame(room) : !canStartGame(room))) {
+            socket.send(JSON.stringify({ type: 'error', message: 'Cannot start game yet. Ensure there are enough players and at least one question is queued.' }));
             return;
           }
 
           logger.event('round-started', { roomCode: room.code });
-          startRound(room, message.question || '');
+          startRound(room, room.questionPoolMode ? '' : (room.phase === 'lobby' ? '' : message.question || ''));
           break;
         }
 
@@ -1893,15 +1983,7 @@ wss.on('connection', (socket, request) => {
         }
 
         case 'lock-answers': {
-          // In host-as-player rooms without questionPoolMode, the current asker locks answers.
-          const canLockAnswers = room && (
-            room.questionPoolMode
-              ? room.hostId === socket.playerId
-              : (room.hostIsPlayer
-                  ? socket.playerId === room.askingPlayerId
-                  : room.hostId === socket.playerId)
-          );
-          if (!canLockAnswers) {
+          if (!canControlActiveRound(room, socket.playerId)) {
             return;
           }
           lockAnswers(room);
@@ -1909,15 +1991,7 @@ wss.on('connection', (socket, request) => {
         }
 
         case 'calculate-score': {
-          // In host-as-player rooms without questionPoolMode, the current asker stops the timer.
-          const canCalculateScore = room && (
-            room.questionPoolMode
-              ? room.hostId === socket.playerId
-              : (room.hostIsPlayer
-                  ? socket.playerId === room.askingPlayerId
-                  : room.hostId === socket.playerId)
-          );
-          if (!canCalculateScore) {
+          if (!canControlActiveRound(room, socket.playerId)) {
             return;
           }
           calculateRoundScores(room);
@@ -2018,7 +2092,7 @@ wss.on('connection', (socket, request) => {
           if (!room || room.hostId !== socket.playerId) {
             return;
           }
-          if (room.hostIsPlayer && !room.questionPoolMode) {
+          if (room.hostIsPlayer && !room.hostQuestionQueueStarted && !room.questionPoolMode) {
             continueToNextQuestion(room);
           } else {
             startNewGame(room);
@@ -2126,6 +2200,10 @@ export {
   canSuggestQuestion,
   canDeleteSuggestion,
   canDismissSuggestion,
+  canManageHostQuestionQueue,
+  addHostQueuedQuestion,
+  removeHostQueuedQuestion,
+  moveHostQueuedQuestion,
   canSubmitPoolQuestion,
   addPoolQuestion,
   canDeletePoolQuestion,
@@ -2138,6 +2216,7 @@ export {
   getRoundEndConfirmerIds,
   hasAllRoundEndConfirmed,
   canConfirmNextRound,
+  canControlActiveRound,
   normalizeGuessFlowMode,
   shuffle,
   getEligibleMatcherIds,

@@ -56,6 +56,11 @@ type PoolQuestion = {
   createdAt?: number
 }
 
+type HostQueuedQuestion = {
+  id: string
+  text: string
+}
+
 type RoomSession = {
   roomCode: string
   role: Role
@@ -130,6 +135,9 @@ type RoomState = {
   suggestedQuestions: SuggestionEntry[]
   mySuggestedQuestions: SuggestionEntry[]
   questionPoolMode?: boolean
+  hostQuestionQueue?: HostQueuedQuestion[]
+  hostQuestionQueueCount?: number
+  currentHostQuestionIndex?: number
   poolQuestions?: PoolQuestion[]
   myPoolQuestions?: PoolQuestion[]
   poolQuestionCount?: number
@@ -266,6 +274,11 @@ const state = {
   guesses: [] as GuessRecord[],
   timeLeft: 0,
   customQuestion: '',
+  hostQuestionQueue: [] as HostQueuedQuestion[],
+  hostQuestionQueueCount: 0,
+  currentHostQuestionIndex: 0,
+  hostQueueDraft: '',
+  hostQueueError: '',
   selectedGuessId: null as string | null,
   selectedGuessSlot: null as 'A' | 'B' | null,
   hasSubmittedAnswer: false,
@@ -662,6 +675,9 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   state.suggestedQuestions = serverState.suggestedQuestions ?? state.suggestedQuestions
   state.mySuggestedQuestions = serverState.mySuggestedQuestions ?? state.mySuggestedQuestions
   state.questionPoolMode = serverState.questionPoolMode ?? state.questionPoolMode
+  state.hostQuestionQueue = serverState.hostQuestionQueue ?? state.hostQuestionQueue
+  state.hostQuestionQueueCount = serverState.hostQuestionQueueCount ?? state.hostQuestionQueue.length
+  state.currentHostQuestionIndex = serverState.currentHostQuestionIndex ?? state.currentHostQuestionIndex
   state.poolQuestions = serverState.poolQuestions ?? state.poolQuestions
   state.myPoolQuestions = serverState.myPoolQuestions ?? state.myPoolQuestions
   state.poolQuestionCount = serverState.poolQuestionCount ?? state.poolQuestionCount
@@ -981,23 +997,66 @@ function startRound(): void {
     return
   }
 
-  const isAsker = state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host'
+  sendSocketMessage('start-round', {})
+}
 
-  if (isAsker) {
-    const questionText = state.customQuestion.trim()
-
-    if (!questionText) {
-      window.alert(t('prompts.typeQuestionFirst'))
-      return
-    }
-
-    if (questionText.length < 8) {
-      window.alert(t('prompts.questionTooShort'))
-      return
-    }
+function addHostQueueQuestion(text: string, clearDraft = true): void {
+  const trimmed = text.trim()
+  if (trimmed.length < 8 || trimmed.length > 220) {
+    state.hostQueueError = t('lobby.queueQuestionLength')
+    renderApp()
+    return
+  }
+  if (state.hostQuestionQueue.some((question) => question.text.trim().toLowerCase() === trimmed.toLowerCase())) {
+    state.hostQueueError = t('lobby.queueDuplicate')
+    renderApp()
+    return
   }
 
-  sendSocketMessage('start-round', { question: state.customQuestion.trim() })
+  if (clearDraft) {
+    state.hostQueueDraft = ''
+  }
+  state.hostQueueError = ''
+  sendSocketMessage('add-host-queue-question', { text: trimmed })
+}
+
+function renderHostQuestionQueuePanel(): string {
+  const queue = state.hostQuestionQueue
+  return `
+    <section class="panel">
+      <div class="section-head">
+        <h2>${t('lobby.questionQueueTitle')}</h2>
+        <span>${t('lobby.questionQueueCount', { count: queue.length })}</span>
+      </div>
+      <form id="host-question-queue-form" class="host-question-form">
+        <label for="host-queue-question">${t('lobby.questionLabel')}</label>
+        <textarea id="host-queue-question" rows="3" maxlength="220" minlength="8" placeholder="${t('lobby.questionPlaceholder')}">${escapeHtml(state.hostQueueDraft)}</textarea>
+        <div class="host-question-actions">
+          <button class="secondary-button" type="submit">${t('lobby.queueAdd')}</button>
+          <button class="ghost-button" type="button" data-role="browse-gallery">${t('lobby.browseGallery')}</button>
+          ${state.account ? `<button class="ghost-button" type="button" data-role="save-to-gallery">${t('lobby.saveToGallery')}</button>` : ''}
+        </div>
+        <p class="field-hint" role="status" data-role="host-queue-error">${escapeHtml(state.hostQueueError)}</p>
+      </form>
+      ${state.showQuestionGallery ? renderGalleryPanel() : ''}
+      <div class="result-list host-question-queue" aria-label="${t('lobby.questionQueueTitle')}">
+        ${queue.length > 0
+          ? queue.map((question, index) => `
+              <div class="result-row" data-role="host-queue-item">
+                <span class="host-queue-position">${index + 1}.</span>
+                <span class="host-queue-text">${escapeHtml(question.text)}</span>
+                <div class="host-question-actions">
+                  <button class="ghost-button" type="button" data-role="move-host-queue-question" data-question-id="${question.id}" data-direction="-1" aria-label="${t('lobby.queueMoveUp')}" ${index === 0 ? 'disabled' : ''}>↑</button>
+                  <button class="ghost-button" type="button" data-role="move-host-queue-question" data-question-id="${question.id}" data-direction="1" aria-label="${t('lobby.queueMoveDown')}" ${index === queue.length - 1 ? 'disabled' : ''}>↓</button>
+                  <button class="ghost-button" type="button" data-role="remove-host-queue-question" data-question-id="${question.id}" aria-label="${t('lobby.queueRemove')}">${t('lobby.queueRemove')}</button>
+                </div>
+              </div>
+            `).join('')
+          : `<div class="result-row"><span>${t('lobby.questionQueueEmpty')}</span></div>`}
+      </div>
+      ${state.allowPlayerSuggestions ? renderSuggestionsPanel() : ''}
+    </section>
+  `
 }
 
 function submitQuestion(questionText: string): void {
@@ -2286,8 +2345,13 @@ function renderSuggestQuestionPanel(): string {
 function wireSuggestionPanels(): void {
   root.querySelectorAll<HTMLButtonElement>('[data-role="use-suggestion"]').forEach((button) => {
     button.addEventListener('click', () => {
-      state.customQuestion = button.dataset.questionText ?? ''
-      renderApp()
+      const text = button.dataset.questionText ?? ''
+      if (state.screen === 'lobby' && !state.questionPoolMode) {
+        addHostQueueQuestion(text, false)
+      } else {
+        state.customQuestion = text
+        renderApp()
+      }
     })
   })
 
@@ -2464,18 +2528,17 @@ function renderRulesPanel(heading: string, rules: string[]): string {
 
 function renderLobby(): void {
   const leaderboard = [...state.players].sort((a, b) => b.score - a.score)
-  const hostQuestionIsValid = state.customQuestion.trim().length >= 8
-  const isAsker = state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host'
+  const isAsker = state.role === 'host'
   const ruleKeyPrefix = state.role === 'host' && !state.hostIsPlayer ? 'host' : 'player'
 
   // Must mirror server.js canStartGame()'s minPlayers formula, or the button can appear enabled/blinking
   // while the server would still reject the start-round request.
-  const minPlayersToStart = state.hostIsPlayer && !state.questionPoolMode ? 4 : 3
+  const minPlayersToStart = 3
   const hasEnoughPlayers = state.players.length >= minPlayersToStart
 
   const canStartRound = state.questionPoolMode
     ? Boolean(state.canStartGame)
-    : (hasEnoughPlayers && (isAsker ? hostQuestionIsValid : false))
+    : (hasEnoughPlayers && state.hostQuestionQueue.length > 0)
 
   root.innerHTML = `
     <main class="shell">
@@ -2501,7 +2564,9 @@ function renderLobby(): void {
                       : (!state.allPlayersReady
                           ? `<small class="field-hint">${t('lobby.waitingForPlayersReady', { ready: state.players.filter((p) => p.ready).length, total: state.players.length })}</small>`
                           : `<small class="field-hint" style="color: #4ade80;">${t('lobby.readyToStart')}</small>`))
-                  : ''}
+                  : state.hostQuestionQueue.length < 1
+                    ? `<small class="field-hint">${t('lobby.questionQueueEmpty')}</small>`
+                    : ''}
             `
             : `<div class="chip waiting-for-host">${state.questionPoolMode ? (state.allPlayersReady ? t('lobby.waitingForHost') : t('lobby.waitingForPlayersReady', { ready: state.players.filter((p) => p.ready).length, total: state.players.length })) : t('lobby.waitingForHost')}</div>`}
         </div>
@@ -2552,30 +2617,9 @@ function renderLobby(): void {
             t('lobby.playerRule4'),
           ])}
         `
-        : isAsker
+        : state.role === 'host'
           ? `
-            <section class="panel">
-              <div class="section-head">
-                <h2>${t('lobby.roundPrompt')}</h2>
-                <span>${state.customQuestion.trim() ? t('lobby.readyToPlay') : t('lobby.required')}</span>
-              </div>
-
-              <form id="host-question-form" class="host-question-form">
-                <label for="host-question">${t('lobby.questionLabel')}</label>
-                <textarea id="host-question" rows="3" maxlength="220" placeholder="${t('lobby.questionPlaceholder')}">${state.customQuestion}</textarea>
-                <div class="host-question-actions">
-                  <button class="secondary-button" type="submit">${t('lobby.saveQuestion')}</button>
-                  <button class="ghost-button" type="button" data-role="clear-question">${t('lobby.clear')}</button>
-                  <button class="ghost-button" type="button" data-role="browse-gallery">${t('lobby.browseGallery')}</button>
-                  ${state.account ? `<button class="ghost-button" type="button" data-role="save-to-gallery">${t('lobby.saveToGallery')}</button>` : ''}
-                </div>
-              </form>
-
-              ${state.showQuestionGallery ? renderGalleryPanel() : ''}
-
-              ${state.allowPlayerSuggestions ? renderSuggestionsPanel() : ''}
-            </section>
-
+            ${renderHostQuestionQueuePanel()}
             ${renderRulesPanel(t('lobby.roomRules'), [
               t(`lobby.${ruleKeyPrefix}Rule1`),
               t(`lobby.${ruleKeyPrefix}Rule2`),
@@ -2651,36 +2695,43 @@ function renderLobby(): void {
     startRound()
   })
 
-  root.querySelector('[data-role="clear-question"]')?.addEventListener('click', () => {
-    state.customQuestion = ''
-    renderApp()
+  const hostQueueTextarea = root.querySelector<HTMLTextAreaElement>('#host-queue-question')
+  hostQueueTextarea?.addEventListener('input', () => {
+    state.hostQueueDraft = hostQueueTextarea.value
   })
 
-  const hostQuestionForm = root.querySelector<HTMLFormElement>('#host-question-form')
-  hostQuestionForm?.addEventListener('submit', (event) => {
+  const hostQueueForm = root.querySelector<HTMLFormElement>('#host-question-queue-form')
+  hostQueueForm?.addEventListener('submit', (event) => {
     event.preventDefault()
-    const textarea = root.querySelector<HTMLTextAreaElement>('#host-question')
-    const value = textarea?.value.trim() ?? ''
-
-    if (!value) {
-      window.alert(t('prompts.typeQuestionFirst'))
-      return
-    }
-
-    state.customQuestion = value
-    renderApp()
+    addHostQueueQuestion(hostQueueTextarea?.value ?? '')
   })
 
   root.querySelector('[data-role="browse-gallery"]')?.addEventListener('click', () => {
+    state.hostQueueDraft = hostQueueTextarea?.value ?? state.hostQueueDraft
     void openQuestionGallery()
   })
 
   root.querySelector('[data-role="save-to-gallery"]')?.addEventListener('click', () => {
-    void saveQuestionToMyGallery(root.querySelector<HTMLTextAreaElement>('#host-question')?.value ?? '')
+    void saveQuestionToMyGallery(hostQueueTextarea?.value ?? '')
+  })
+
+  root.querySelectorAll<HTMLButtonElement>('[data-role="remove-host-queue-question"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      sendSocketMessage('remove-host-queue-question', { questionId: button.dataset.questionId })
+    })
+  })
+
+  root.querySelectorAll<HTMLButtonElement>('[data-role="move-host-queue-question"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      sendSocketMessage('move-host-queue-question', {
+        questionId: button.dataset.questionId,
+        direction: Number(button.dataset.direction),
+      })
+    })
   })
 
   wireGalleryPanel((text) => {
-    state.customQuestion = text
+    addHostQueueQuestion(text, false)
   })
 
   wireSuggestionPanels()
@@ -2693,6 +2744,11 @@ function renderQuestionAskerTag(): string {
     const total = state.poolTotalQuestions || state.poolQuestionCount || 1
     const current = Math.min(state.currentPoolQuestionIndex + 1, total)
     return `<p class="asker-tag">${t('game.questionProgress', { current, total })}</p>`
+  }
+
+  if ((state.hostQuestionQueueCount || 0) > 0) {
+    const current = Math.min((state.currentHostQuestionIndex || 0) + 1, state.hostQuestionQueueCount)
+    return `<p class="asker-tag">${t('game.questionProgress', { current, total: state.hostQuestionQueueCount })}</p>`
   }
 
   if (!state.hostIsPlayer) {
@@ -2812,7 +2868,9 @@ function renderHostManaging(): void {
   const visiblePlayers = state.players.filter((player) => player.id !== state.currentPlayerId)
   const guessMap = new Map(state.guesses.map((guess) => [guess.guesserId, guess]))
   // In host-as-player rooms without questionPoolMode, the current asker controls the round. In questionPoolMode, host controls.
-  const canControlRound = state.questionPoolMode ? state.role === 'host' : (state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host')
+  const canControlRound = state.questionPoolMode || (state.hostQuestionQueueCount || 0) > 0
+    ? state.role === 'host'
+    : (state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host')
 
   root.innerHTML = `
     <main class="shell">
@@ -2958,7 +3016,9 @@ function renderPlayerAnswering(): void {
     ? t('playerAnswering.questionBy', { name: state.questionAuthorName, question: state.question })
     : state.question
   // In host-as-player rooms without questionPoolMode, the current asker controls the round. In questionPoolMode, host controls.
-  const canControlRound = state.questionPoolMode ? state.role === 'host' : (state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host')
+  const canControlRound = state.questionPoolMode || (state.hostQuestionQueueCount || 0) > 0
+    ? state.role === 'host'
+    : (state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host')
 
   const submittedPlayerIds = new Set(state.answers.map((entry) => entry.playerId))
   const remainingPlayers = state.players.filter((player) => {
@@ -3037,7 +3097,9 @@ function renderFinalMatchupGuessing(): void {
   }
 
   // In host-as-player rooms without questionPoolMode, the current asker controls the round. In questionPoolMode, host controls.
-  const canControlRound = state.questionPoolMode ? state.role === 'host' : (state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host')
+  const canControlRound = state.questionPoolMode || (state.hostQuestionQueueCount || 0) > 0
+    ? state.role === 'host'
+    : (state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host')
   // Both remaining authors already know the true pairing, so they sit this round out.
   const isExcludedAuthor = matchup.authorIds.includes(state.currentPlayerId)
   const authors = matchup.authorIds
@@ -3130,7 +3192,9 @@ function renderPlayerGuessing(): void {
   }
 
   // In host-as-player rooms without questionPoolMode, the current asker controls the round. In questionPoolMode, host controls.
-  const canControlRound = state.questionPoolMode ? state.role === 'host' : (state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host')
+  const canControlRound = state.questionPoolMode || (state.hostQuestionQueueCount || 0) > 0
+    ? state.role === 'host'
+    : (state.hostIsPlayer ? state.currentPlayerId === state.askingPlayerId : state.role === 'host')
   // Players already revealed as a correct answer in an earlier round are no longer valid guesses.
   const guessOptions = state.players.filter((player) => player.id !== state.currentPlayerId && state.remainingAuthorIds.includes(player.id))
   const selectedGuessId = state.selectedGuessId ?? state.guesses.find((entry) => entry.guesserId === state.currentPlayerId)?.guessedId ?? null
@@ -3668,7 +3732,7 @@ function renderGameEnd(): void {
 
       ${pendingNextAsker ? `<section class="panel" role="status"><strong>${t('gameEnd.nextAsker', { name: pendingNextAsker.name })}</strong></section>` : ''}
 
-      ${state.role === 'host' ? `<button class="primary-button next-round" type="button" data-role="new-game">${state.hostIsPlayer && !state.questionPoolMode ? t('gameEnd.continueNextQuestion') : t('gameEnd.newGame')}</button>` : ''}
+      ${state.role === 'host' ? `<button class="primary-button next-round" type="button" data-role="new-game">${state.hostIsPlayer && !state.questionPoolMode && !state.hostQuestionQueueCount ? t('gameEnd.continueNextQuestion') : t('gameEnd.newGame')}</button>` : ''}
 
       ${state.allowPlayerSuggestions && state.role === 'player' ? renderSuggestQuestionPanel() : ''}
     </main>

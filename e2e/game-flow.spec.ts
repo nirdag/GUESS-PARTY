@@ -66,8 +66,8 @@ async function completeQuestion(host: Client, players: Client[], questionNumber:
   const question = `Question ${questionNumber}: what makes a game night memorable?`
   const answers = new Map(players.map((player) => [player.name, `Question ${questionNumber} answer from ${player.name}`]))
 
-  await host.page.locator('#host-question').fill(question)
-  await host.page.locator('#host-question-form').getByRole('button', { name: 'Save question' }).click()
+  await host.page.locator('#host-queue-question').fill(question)
+  await host.page.locator('#host-question-queue-form').getByRole('button', { name: 'Add question' }).click()
   await host.page.locator('[data-role="start-round"]').click()
   await checkpoint(host, `question-${questionNumber}-answer-collection`)
 
@@ -138,7 +138,7 @@ test('host and four players can complete two live questions', async ({ browser, 
   await completeQuestion(host, players, 1, expectedScores)
 
     await host.page.locator('[data-role="new-game"]').click()
-    await expect(host.page.locator('#host-question')).toBeVisible()
+    await expect(host.page.locator('#host-question-queue-form')).toBeVisible()
 
     await completeQuestion(host, players, 2, expectedScores)
 
