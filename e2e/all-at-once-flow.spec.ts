@@ -79,9 +79,10 @@ test('all-at-once guessing mode: full matching board flow with rank-based scorin
 
     // The matching board (not the sequential one-answer-at-a-time screen) should appear for every player.
     for (const client of [alice, bob, carol]) {
-      await expect(client.page.locator('[data-role="matching-slot"]')).toHaveCount(3)
-      await expect(client.page.locator('[data-role="matching-token"]')).toHaveCount(3)
-      await expect(client.page.locator('.matching-token-drag-hint')).toHaveCount(3)
+      // Each player authored one of the 3 answers, so their own board only has the other 2 to match.
+      await expect(client.page.locator('[data-role="matching-slot"]')).toHaveCount(2)
+      await expect(client.page.locator('[data-role="matching-token"]')).toHaveCount(2)
+      await expect(client.page.locator('.matching-token-drag-hint')).toHaveCount(2)
     }
     const ltrSlot = await alice.page.locator('[data-role="matching-slot"]').first().boundingBox()
     const ltrToken = await alice.page.locator('[data-role="matching-token"]').first().boundingBox()
@@ -103,15 +104,19 @@ test('all-at-once guessing mode: full matching board flow with rank-based scorin
     await alice.page.mouse.up()
 
     // A tentative match can be removed before the final drop, returning its name to the token column.
-    await placeMatchToken(alice, alice.name, answers.get(alice.name)!)
+    // Alice never sees her own answer/name on the board, so she matches one of the other two players here.
+    await placeMatchToken(alice, bob.name, answers.get(bob.name)!)
     await expect(alice.page.locator('[data-role="remove-match"]')).toHaveCount(1)
     await alice.page.locator('[data-role="remove-match"]').click()
     await expect(alice.page.locator('[data-role="matching-slot"].filled')).toHaveCount(0)
-    await expect(alice.page.locator('[data-role="matching-token"]')).toHaveCount(3)
+    await expect(alice.page.locator('[data-role="matching-token"]')).toHaveCount(2)
 
-    // Every player fully matches all 3 answers - including their own, per design (no board is missing an entry).
+    // Every player matches the other two answers - their own answer/name is excluded from their own board.
     for (const client of [alice, bob, carol]) {
       for (const [name, text] of answers) {
+        if (name === client.name) {
+          continue
+        }
         await placeMatchToken(client, name, text)
       }
       await expect(client.page.locator('[data-role="matching-token"]')).toHaveCount(0)
@@ -122,23 +127,25 @@ test('all-at-once guessing mode: full matching board flow with rank-based scorin
     // Round auto-completes once everyone is done; no manual "lock"/"calculate score" step exists for this mode.
     await expect(host.page.locator('.leaderboard')).toBeVisible()
 
-    // Each answer had 3 correct guessers ranked 3/2/1 by placement speed -> 6 points distributed per answer,
-    // 18 points total across all 3 answers, split across the 3 players.
+    // Each answer now has only 2 eligible guessers (its author can't guess it) ranked 2/1 by placement speed ->
+    // 3 points distributed per answer, 9 points total across all 3 answers, split across the 3 players.
     const scoreTexts = await host.page.locator('.leaderboard-row strong').allInnerTexts()
     const totalScore = scoreTexts.reduce((sum, text) => sum + Number(text.replace(/\D/g, '')), 0)
-    expect(totalScore).toBe(18)
+    expect(totalScore).toBe(9)
 
-    // Results are grouped by guesser: every player starts on their own three guesses and sees their round total.
+    // Results are grouped by guesser: every player starts on their own two guesses (their own answer is excluded)
+    // and sees their round total. Clients finish in loop order (Alice, then Bob, then Carol), so Alice is the
+    // fastest guesser on every slot she placed, and Bob beats Carol wherever they guessed the same slot.
     const resultTabs = alice.page.locator('[data-role="all-at-once-result-tab"]')
     await expect(resultTabs).toHaveCount(3)
     await expect(resultTabs.filter({ hasText: alice.name })).toHaveAttribute('aria-selected', 'true')
-    await expect(alice.page.locator('.all-at-once-results-panel .result-row')).toHaveCount(3)
-    await expect(alice.page.locator('.all-at-once-results-total strong')).toHaveText('9 pts')
+    await expect(alice.page.locator('.all-at-once-results-panel .result-row')).toHaveCount(2)
+    await expect(alice.page.locator('.all-at-once-results-total strong')).toHaveText('4 pts')
 
     await resultTabs.filter({ hasText: bob.name }).click()
     await expect(resultTabs.filter({ hasText: bob.name })).toHaveAttribute('aria-selected', 'true')
-    await expect(alice.page.locator('.all-at-once-results-panel .result-row')).toHaveCount(3)
-    await expect(alice.page.locator('.all-at-once-results-total strong')).toHaveText('6 pts')
+    await expect(alice.page.locator('.all-at-once-results-panel .result-row')).toHaveCount(2)
+    await expect(alice.page.locator('.all-at-once-results-total strong')).toHaveText('3 pts')
 
     // Another player's confirmation broadcasts room state, but must not reset Alice's selected result tab.
     await host.page.locator('[data-role="confirm-next-round"]').click()
@@ -221,8 +228,9 @@ test('all-at-once mode survives a host-setup re-render when combined with host-a
     await host.page.locator('[data-role="lock-answers"]').click()
 
     // The matching board (not the sequential one-answer-at-a-time screen) must appear for everyone, host included.
+    // Each client authored one of the 3 answers, so their own board only has the other 2 to match.
     for (const client of [host, alice, bob]) {
-      await expect(client.page.locator('[data-role="matching-slot"]')).toHaveCount(3)
+      await expect(client.page.locator('[data-role="matching-slot"]')).toHaveCount(2)
     }
     await expect(host.page.locator('html')).toHaveAttribute('dir', 'rtl')
     const rtlSlot = await host.page.locator('[data-role="matching-slot"]').first().boundingBox()
@@ -233,6 +241,9 @@ test('all-at-once mode survives a host-setup re-render when combined with host-a
 
     for (const client of [host, alice, bob]) {
       for (const [name, text] of answers) {
+        if (name === client.name) {
+          continue
+        }
         await placeMatchToken(client, name, text)
       }
     }

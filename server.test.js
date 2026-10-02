@@ -2217,6 +2217,24 @@ describe('HIGH: All-at-once guessing mode', () => {
     expect(state.matchingAuthorIds).toEqual(room.matchingTokenOrder);
   });
 
+  it('makeRoomState hides the viewer\'s own answer slot and name token while matching is live, but reveals it afterwards', () => {
+    const { room, alice, bob } = setUpMatchingRoom();
+    const aliceSlot = room.matchingBoard.find((slot) => slot.authorId === alice.id);
+
+    const aliceView = makeRoomState(room, alice.id);
+    expect(aliceView.matchingBoard).toHaveLength(2);
+    expect(aliceView.matchingBoard.some((slot) => slot.slotId === aliceSlot.slotId)).toBe(false);
+    expect(aliceView.matchingAuthorIds).not.toContain(alice.id);
+
+    const bobView = makeRoomState(room, bob.id);
+    expect(bobView.matchingBoard).toHaveLength(2);
+    expect(bobView.matchingBoard.some((slot) => slot.slotId === aliceSlot.slotId)).toBe(true);
+
+    calculateAllAtOnceScores(room);
+    const aliceViewAfter = makeRoomState(room, alice.id);
+    expect(aliceViewAfter.matchingBoard.some((slot) => slot.slotId === aliceSlot.slotId)).toBe(true);
+  });
+
   it('shuffle() returns a new array with the same elements, without mutating the input', () => {
     const input = ['a', 'b', 'c', 'd', 'e'];
     const result = shuffle(input);
@@ -2239,9 +2257,19 @@ describe('HIGH: All-at-once guessing mode', () => {
     expect(postState.matchingBoard.every((slot) => typeof slot.authorId === 'string')).toBe(true);
   });
 
+  it('canSubmitMatch rejects placing on your own answer slot or guessing yourself as someone else\'s author', () => {
+    const { room, alice, bob } = setUpMatchingRoom();
+    const aliceSlot = room.matchingBoard.find((slot) => slot.authorId === alice.id);
+    const bobSlot = room.matchingBoard.find((slot) => slot.authorId === bob.id);
+
+    expect(canSubmitMatch(room, alice.id, aliceSlot.slotId, bob.id)).toBe(false);
+    expect(canSubmitMatch(room, alice.id, bobSlot.slotId, alice.id)).toBe(false);
+    expect(canSubmitMatch(room, alice.id, bobSlot.slotId, bob.id)).toBe(true);
+  });
+
   it('submitMatch rejects wrong phase, ineligible guesser, duplicate slot, and duplicate token reuse', () => {
     const { room, alice, bob, charlie } = setUpMatchingRoom();
-    const [slotA, slotB] = room.matchingBoard;
+    const [slotA, slotB] = room.matchingBoard.filter((slot) => slot.authorId !== alice.id);
 
     // Wrong slot id / guessed id are rejected
     expect(submitMatch(room, alice.id, 'not-a-real-slot', bob.id)).toBe(false);
@@ -2263,23 +2291,24 @@ describe('HIGH: All-at-once guessing mode', () => {
 
   it('allows a matcher to undo an unconfirmed placement but locks their board after the final drop', () => {
     vi.useFakeTimers();
-    const { room, alice, bob } = setUpMatchingRoom();
-    const [slotA, slotB, slotC] = room.matchingBoard;
+    const { room, alice, bob, charlie } = setUpMatchingRoom();
+    const slotForBob = room.matchingBoard.find((slot) => slot.authorId === bob.id);
+    const slotForCharlie = room.matchingBoard.find((slot) => slot.authorId === charlie.id);
 
-    expect(submitMatch(room, alice.id, slotA.slotId, bob.id)).toBe(true);
-    expect(removeMatch(room, bob.id, slotA.slotId)).toBe(false);
-    expect(removeMatch(room, alice.id, slotA.slotId)).toBe(true);
-    expect(submitMatch(room, alice.id, slotA.slotId, slotA.authorId)).toBe(true);
+    // Alice authored a slot of her own, so she only has these 2 (of 3) matchable slots to complete.
+    expect(submitMatch(room, alice.id, slotForBob.slotId, charlie.id)).toBe(true);
+    expect(removeMatch(room, bob.id, slotForBob.slotId)).toBe(false);
+    expect(removeMatch(room, alice.id, slotForBob.slotId)).toBe(true);
+    expect(submitMatch(room, alice.id, slotForBob.slotId, bob.id)).toBe(true);
 
     vi.setSystemTime(1234);
-    expect(submitMatch(room, alice.id, slotB.slotId, slotB.authorId)).toBe(true);
-    expect(submitMatch(room, alice.id, slotC.slotId, slotC.authorId)).toBe(true);
+    expect(submitMatch(room, alice.id, slotForCharlie.slotId, charlie.id)).toBe(true);
 
     const aliceMatches = room.matches.filter((match) => match.guesserId === alice.id);
     expect(room.matchingConfirmedIds).toContain(alice.id);
     expect(aliceMatches.every((match) => match.submittedAt === 1234)).toBe(true);
-    expect(removeMatch(room, alice.id, slotA.slotId)).toBe(false);
-    expect(submitMatch(room, alice.id, slotA.slotId, bob.id)).toBe(false);
+    expect(removeMatch(room, alice.id, slotForBob.slotId)).toBe(false);
+    expect(submitMatch(room, alice.id, slotForCharlie.slotId, bob.id)).toBe(false);
     vi.useRealTimers();
   });
 
@@ -2299,9 +2328,11 @@ describe('HIGH: All-at-once guessing mode', () => {
 
     calculateAllAtOnceScores(room);
 
-    expect(bob.score).toBe(9);
-    expect(charlie.score).toBe(6);
-    expect(dave.score).toBe(3);
+    // Bob/Charlie can't guess their own slot (one fewer eligible guesser on it), Dave has no slot of his own.
+    // Alice's slot: all 3 guess it (3/2/1). Bob's slot: only charlie+dave guess it (2/1). Charlie's slot: only bob+dave (2/1).
+    expect(bob.score).toBe(5); // Alice's slot fastest (3) + Charlie's slot fastest (2)
+    expect(charlie.score).toBe(4); // Alice's slot 2nd (2) + Bob's slot fastest (2)
+    expect(dave.score).toBe(3); // Slowest on all 3 slots (1+1+1)
     expect(room.roundResults.every((result) => typeof result.guesserId === 'string')).toBe(true);
     expect(room.phase).toBe('round-end');
     vi.useRealTimers();
@@ -2309,9 +2340,11 @@ describe('HIGH: All-at-once guessing mode', () => {
 
   it('calculateAllAtOnceScores gives 0 points for incorrect matches', () => {
     const { room, alice, bob, charlie } = setUpMatchingRoom();
+    // Bob can't guess his own slot, so only his 2 matchable (alice's and charlie's) slots are in play here.
+    const matchableSlots = room.matchingBoard.filter((slot) => slot.authorId !== bob.id);
 
-    room.matchingBoard.forEach((slot, index) => {
-      const wrongAuthor = room.matchingBoard[(index + 1) % room.matchingBoard.length].authorId;
+    matchableSlots.forEach((slot, index) => {
+      const wrongAuthor = matchableSlots[(index + 1) % matchableSlots.length].authorId;
       submitMatch(room, bob.id, slot.slotId, wrongAuthor);
     });
     calculateAllAtOnceScores(room);
@@ -2327,7 +2360,7 @@ describe('HIGH: All-at-once guessing mode', () => {
 
     expect(isMatchingComplete(room)).toBe(false);
 
-    // Each player fully matches all 3 slots (including their own, per design decision).
+    // Each player fully matches all of THEIR matchable slots - their own answer's slot is never guessable.
     [alice, bob, charlie].forEach((guesser) => {
       room.matchingBoard.forEach((slot) => {
         submitMatch(room, guesser.id, slot.slotId, slot.authorId);

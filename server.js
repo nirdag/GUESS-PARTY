@@ -401,6 +401,10 @@ function canSubmitMatch(room, guesserId, slotId, guessedId) {
   if (!slot) {
     return false;
   }
+  // Your own answer's slot and your own name are hidden from your board - never guessable even off-UI.
+  if (slot.authorId === guesserId || guessedId === guesserId) {
+    return false;
+  }
   // The name-token pool is exactly this round's answer authors, not every player in the room.
   const authorIds = new Set(room.matchingBoard.map((entry) => entry.authorId));
   if (!authorIds.has(guessedId)) {
@@ -409,6 +413,11 @@ function canSubmitMatch(room, guesserId, slotId, guessedId) {
   const alreadyPlacedThisSlot = room.matches.some((match) => match.guesserId === guesserId && match.slotId === slotId);
   const tokenAlreadyUsed = room.matches.some((match) => match.guesserId === guesserId && match.guessedId === guessedId);
   return !alreadyPlacedThisSlot && !tokenAlreadyUsed;
+}
+
+// Slots a given player is actually expected to fill - excludes their own answer's slot, if they have one on the board.
+function getMatchableSlotsForPlayer(room, playerId) {
+  return room.matchingBoard.filter((slot) => slot.authorId !== playerId);
 }
 
 function submitMatch(room, guesserId, slotId, guessedId) {
@@ -425,7 +434,7 @@ function submitMatch(room, guesserId, slotId, guessedId) {
   });
 
   const myMatches = room.matches.filter((match) => match.guesserId === guesserId);
-  if (myMatches.length === room.matchingBoard.length) {
+  if (myMatches.length === getMatchableSlotsForPlayer(room, guesserId).length) {
     const completedAt = Date.now();
     myMatches.forEach((match) => {
       match.submittedAt = completedAt;
@@ -597,14 +606,20 @@ function makeRoomState(room, viewerPlayerId = null) {
     canStartGame: canStartGame(room),
     guessFlowMode: room.guessFlowMode || 'sequential',
     // Text only while matching is live - authorId is withheld so a client can't read the answer off the network payload.
-    matchingBoard: (room.matchingBoard || []).map((slot) => (
-      room.phase === 'matching'
-        ? { slotId: slot.slotId, text: slot.text }
-        : { slotId: slot.slotId, text: slot.text, authorId: slot.authorId }
-    )),
+    // Each viewer's own answer slot is hidden entirely while matching is live, so nobody can guess themselves.
+    matchingBoard: (room.matchingBoard || [])
+      .filter((slot) => room.phase !== 'matching' || slot.authorId !== viewerPlayerId)
+      .map((slot) => (
+        room.phase === 'matching'
+          ? { slotId: slot.slotId, text: slot.text }
+          : { slotId: slot.slotId, text: slot.text, authorId: slot.authorId }
+      )),
     // The name-token pool (who wrote an answer this round) - independently shuffled from matchingBoard's slot
     // order (see buildMatchingBoard), so token position never reveals the correct slot by alignment.
-    matchingAuthorIds: room.matchingTokenOrder || [],
+    // The viewer's own name is withheld too - there's never a valid slot left for them to place it on.
+    matchingAuthorIds: room.phase === 'matching'
+      ? (room.matchingTokenOrder || []).filter((id) => id !== viewerPlayerId)
+      : (room.matchingTokenOrder || []),
     myMatches: (room.matches || [])
       .filter((match) => match.guesserId === viewerPlayerId)
       .map((match) => ({ slotId: match.slotId, guessedId: match.guessedId, guessedName: match.guessedName })),
@@ -2220,6 +2235,7 @@ export {
   normalizeGuessFlowMode,
   shuffle,
   getEligibleMatcherIds,
+  getMatchableSlotsForPlayer,
   isMatchingComplete,
   canSubmitMatch,
   submitMatch,
