@@ -96,6 +96,7 @@ test('pre-game question pool gathering, host moderation, player ready confirmati
     await alice.page.locator('#pool-question-form').getByRole('button', { name: 'Submit question' }).click()
     await expect(alice.page.locator('[data-role="toggle-pool-ready"]')).toHaveText('Add or edit questions')
     await expect(alice.page.locator('body')).toContainText('Ready to play')
+    await expect(host.page.locator('.player-list')).not.toContainText(/\(\d+\/3\)/)
 
     // Bob submits a question
     await bob.page.locator('#pool-question-input').fill(bobQuestion)

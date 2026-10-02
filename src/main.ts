@@ -2595,7 +2595,7 @@ function renderLobby(): void {
                   <div style="display: flex; flex-direction: column; gap: 2px;">
                     <span>${player.name}</span>
                     ${state.questionPoolMode
-                      ? `<small style="font-size: 11px; color: ${player.ready ? '#4ade80' : 'var(--muted)'};">${player.ready ? `✅ ${t('lobby.playerReadyBadge')}` : `✍️ ${t('lobby.playerNotReadyBadge')}`} (${player.poolQuestionCount || 0}/3)</small>`
+                      ? `<small style="font-size: 11px; color: ${player.ready ? '#4ade80' : 'var(--muted)'};">${player.ready ? `✅ ${t('lobby.playerReadyBadge')}` : `✍️ ${t('lobby.playerNotReadyBadge')}`}</small>`
                       : ''}
                   </div>
                 </div>
