@@ -227,11 +227,77 @@ function canManageHostQuestionQueue(room, playerId) {
   return Boolean(room && !room.questionPoolMode && room.phase === 'lobby' && playerId && room.hostId === playerId);
 }
 
+function normalizeRandomPlaylistCount(value) {
+  const count = Number(value);
+  return Number.isInteger(count) && count >= 1 && count <= MAX_HOST_QUESTION_QUEUE_LENGTH
+    ? count
+    : MAX_HOST_QUESTION_QUEUE_LENGTH;
+}
+
+function initializeRandomPlaylist(room, questionCount, questions = questionService.listQuestions(room.language)) {
+  if (!room || room.questionPoolMode) {
+    return [];
+  }
+
+  room.randomPlaylistMode = true;
+  room.randomPlaylistTargetCount = normalizeRandomPlaylistCount(questionCount);
+  room.usedRandomQuestionIds = [];
+  const uniqueQuestions = [...new Map(
+    (questions || [])
+      .filter((question) => question?.id && question?.text && (!question.language || question.language === room.language))
+      .map((question) => [question.id, question]),
+  ).values()];
+  const selectedQuestions = shuffle(uniqueQuestions).slice(0, room.randomPlaylistTargetCount);
+
+  room.hostQuestionQueue = selectedQuestions.map((question) => ({
+    id: crypto.randomUUID(),
+    text: question.text,
+    catalogQuestionId: question.id,
+  }));
+  room.usedRandomQuestionIds = selectedQuestions.map((question) => question.id);
+  return room.hostQuestionQueue;
+}
+
+function addRandomHostQueuedQuestion(room, playerId, questions = questionService.listQuestions(room?.language)) {
+  if (!canManageHostQuestionQueue(room, playerId) || !room.randomPlaylistMode) {
+    return null;
+  }
+  const targetCount = normalizeRandomPlaylistCount(room.randomPlaylistTargetCount);
+  if (room.hostQuestionQueue.length >= Math.min(targetCount, MAX_HOST_QUESTION_QUEUE_LENGTH)) {
+    return null;
+  }
+
+  const usedIds = new Set(room.usedRandomQuestionIds || []);
+  const queuedTexts = new Set((room.hostQuestionQueue || []).map((entry) => entry.text.trim().toLowerCase()));
+  const candidates = [...new Map(
+    (questions || [])
+      .filter((question) => question?.id && question?.text && question.language === room.language
+        && !usedIds.has(question.id) && !queuedTexts.has(question.text.trim().toLowerCase()))
+      .map((question) => [question.id, question]),
+  ).values()];
+  const question = shuffle(candidates)[0];
+  if (!question) {
+    return null;
+  }
+
+  const queuedQuestion = {
+    id: crypto.randomUUID(),
+    text: question.text,
+    catalogQuestionId: question.id,
+  };
+  room.usedRandomQuestionIds = [...usedIds, question.id];
+  room.hostQuestionQueue.push(queuedQuestion);
+  return queuedQuestion;
+}
+
 function addHostQueuedQuestion(room, playerId, text) {
   if (!canManageHostQuestionQueue(room, playerId)) {
     return null;
   }
-  if (room.hostQuestionQueue.length >= MAX_HOST_QUESTION_QUEUE_LENGTH) {
+  const queueLimit = room.randomPlaylistMode
+    ? Math.min(normalizeRandomPlaylistCount(room.randomPlaylistTargetCount), MAX_HOST_QUESTION_QUEUE_LENGTH)
+    : MAX_HOST_QUESTION_QUEUE_LENGTH;
+  if (room.hostQuestionQueue.length >= queueLimit) {
     return null;
   }
   const trimmed = String(text || '').trim();
@@ -256,7 +322,7 @@ function removeHostQueuedQuestion(room, playerId, questionId) {
 }
 
 function moveHostQueuedQuestion(room, playerId, questionId, direction) {
-  if (!canManageHostQuestionQueue(room, playerId) || ![-1, 1].includes(direction)) {
+  if (!canManageHostQuestionQueue(room, playerId) || room.randomPlaylistMode || ![-1, 1].includes(direction)) {
     return false;
   }
   const index = room.hostQuestionQueue.findIndex((question) => question.id === questionId);
@@ -584,6 +650,8 @@ function makeRoomState(room, viewerPlayerId = null) {
     guessCountdownEndsAt: room.guessCountdownEndsAt,
     remainingAuthorIds: [...getEligibleGuessTargetIds(room)],
     hostIsPlayer: room.hostIsPlayer,
+    randomPlaylistMode: Boolean(room.randomPlaylistMode),
+    randomPlaylistTargetCount: room.randomPlaylistTargetCount || MAX_HOST_QUESTION_QUEUE_LENGTH,
     askingPlayerId: room.askingPlayerId,
     pendingNextAskerId: room.pendingNextAskerId,
     allowPlayerSuggestions: room.allowPlayerSuggestions,
@@ -775,7 +843,7 @@ function normalizeGuessTimeoutSeconds(value) {
   return GUESS_TIMEOUT_SECONDS;
 }
 
-function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvatar, guessTimeoutSeconds, addSelfAsPlayer = false, allowPlayerSuggestions = false, questionPoolMode = false, guessFlowMode = 'sequential' }) {
+function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvatar, guessTimeoutSeconds, addSelfAsPlayer = false, allowPlayerSuggestions = false, questionPoolMode = false, randomPlaylistMode = false, randomPlaylistCount = MAX_HOST_QUESTION_QUEUE_LENGTH, guessFlowMode = 'sequential' }) {
   const code = createRoomCode();
   const hostId = `${code}-host-${Date.now()}`;
   const normalizedHostName = (hostName || 'Host').trim() || 'Host';
@@ -821,6 +889,9 @@ function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvata
     allowPlayerSuggestions: (addSelfAsPlayer || isQuestionPoolMode) ? false : Boolean(allowPlayerSuggestions),
     suggestedQuestions: [],
     questionPoolMode: isQuestionPoolMode,
+    randomPlaylistMode: Boolean(randomPlaylistMode) && !isQuestionPoolMode,
+    randomPlaylistTargetCount: normalizeRandomPlaylistCount(randomPlaylistCount),
+    usedRandomQuestionIds: [],
     hostQuestionQueue: [],
     currentHostQuestionIndex: 0,
     hostQuestionQueueStarted: false,
@@ -835,6 +906,10 @@ function createRoom({ hostName, hostAccountId = null, language = 'en', hostAvata
     matches: [],
     matchingConfirmedIds: [],
   };
+
+  if (room.randomPlaylistMode) {
+    initializeRandomPlaylist(room, randomPlaylistCount);
+  }
 
   if (room.hostIsPlayer) {
     room.players.push({
@@ -1781,6 +1856,8 @@ wss.on('connection', (socket, request) => {
             addSelfAsPlayer: message.addSelfAsPlayer,
             allowPlayerSuggestions: message.allowPlayerSuggestions,
             questionPoolMode: message.questionPoolMode,
+            randomPlaylistMode: message.questionPoolMode ? false : message.randomPlaylistMode !== false,
+            randomPlaylistCount: message.randomPlaylistCount,
             guessFlowMode: message.guessFlowMode,
           });
           attachSocketToRoom(roomData, socket, roomData.hostId);
@@ -1888,6 +1965,17 @@ wss.on('connection', (socket, request) => {
 
         case 'move-host-queue-question': {
           if (!room || !moveHostQueuedQuestion(room, socket.playerId, message.questionId, Number(message.direction))) {
+            return;
+          }
+          broadcastRoom(room);
+          break;
+        }
+
+        case 'add-random-host-queue-question': {
+          if (!room || !addRandomHostQueuedQuestion(room, socket.playerId)) {
+            if (room && room.hostId === socket.playerId && room.randomPlaylistMode && room.phase === 'lobby') {
+              socket.send(JSON.stringify({ type: 'error', code: 'RANDOM_QUESTION_UNAVAILABLE' }));
+            }
             return;
           }
           broadcastRoom(room);
@@ -2220,6 +2308,8 @@ export {
   canDeleteSuggestion,
   canDismissSuggestion,
   canManageHostQuestionQueue,
+  initializeRandomPlaylist,
+  addRandomHostQueuedQuestion,
   addHostQueuedQuestion,
   removeHostQueuedQuestion,
   moveHostQueuedQuestion,

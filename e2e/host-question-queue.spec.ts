@@ -10,6 +10,10 @@ const hostCredentials = {
   email: 'e2e-host@example.com',
   password: 'e2e-password-123',
 }
+const adminCredentials = {
+  email: 'admin@guess-party.local',
+  password: 'e2e-password-123',
+}
 
 async function createClient(browser: Browser, name: string): Promise<Client> {
   const context = await browser.newContext()
@@ -48,6 +52,7 @@ test('host queues gallery and custom questions, edits order, and plays them as a
     await host.page.goto('/')
     await host.page.getByRole('button', { name: 'Create room' }).click()
     await host.page.locator('#host-setup-name').fill('Host')
+    await host.page.locator('#host-setup-random-playlist').uncheck()
     await host.page.locator('#host-setup-form').getByRole('button', { name: 'Create room' }).click()
     await expect(host.page.locator('.room-card strong')).toHaveText(/^[A-Z0-9]{6}$/)
     const roomCode = await host.page.locator('.room-card strong').innerText()
@@ -117,6 +122,7 @@ test('host question queue stops at ten and allows additions after removing one',
     await host.page.goto('/')
     await host.page.getByRole('button', { name: 'Create room' }).click()
     await host.page.locator('#host-setup-name').fill('Host')
+    await host.page.locator('#host-setup-random-playlist').uncheck()
     await host.page.locator('#host-setup-form').getByRole('button', { name: 'Create room' }).click()
     await expect(host.page.locator('.room-card strong')).toHaveText(/^[A-Z0-9]{6}$/)
     const roomCode = await host.page.locator('.room-card strong').innerText()
@@ -167,6 +173,7 @@ test('host-as-player answers queued questions and keeps host round controls', as
     await host.page.getByRole('button', { name: 'Create room' }).click()
     await host.page.locator('#host-setup-name').fill('Host')
     await host.page.locator('#host-setup-add-self').check()
+    await host.page.locator('#host-setup-random-playlist').uncheck()
     await host.page.locator('#host-setup-form').getByRole('button', { name: 'Create room' }).click()
     await expect(host.page.locator('.room-card strong')).toHaveText(/^[A-Z0-9]{6}$/)
     const roomCode = await host.page.locator('.room-card strong').innerText()
@@ -197,6 +204,83 @@ test('host-as-player answers queued questions and keeps host round controls', as
     await host.page.locator('[data-role="lock-answers"]').click()
     await expect(host.page.locator('[data-role="calculate-score"]')).toBeVisible()
   } finally {
+    await Promise.all(clients.map((client) => client.context.close()))
+  }
+})
+
+test('default random playlist can be edited and starts with its first selected question', async ({ browser, baseURL }) => {
+  const clients: Client[] = []
+  const host = await createClient(browser, 'Host')
+  const apiURL = baseURL?.replace(':5173', ':8081')
+  const catalogQuestionTexts = [
+    'E2E public random playlist question alpha?',
+    'E2E public random playlist question beta?',
+    'E2E public random playlist question gamma?',
+  ]
+  const createdQuestionIds: string[] = []
+  clients.push(host)
+
+  try {
+    const loginResponse = await host.context.request.post(`${apiURL}/auth/e2e-login`, { data: adminCredentials })
+    expect(loginResponse.ok(), `${loginResponse.status()} ${await loginResponse.text()}`).toBeTruthy()
+    const existingResponse = await host.context.request.get(`${apiURL}/questions?language=en`)
+    const existingPayload = await existingResponse.json()
+    for (const question of existingPayload.questions ?? []) {
+      if (catalogQuestionTexts.includes(question.text)) {
+        await host.context.request.delete(`${apiURL}/admin/questions/${question.id}`)
+      }
+    }
+    for (const text of catalogQuestionTexts) {
+      const response = await host.context.request.post(`${apiURL}/admin/questions`, { data: { language: 'en', text } })
+      expect(response.ok(), `${response.status()} ${await response.text()}`).toBeTruthy()
+      createdQuestionIds.push((await response.json()).question.id)
+    }
+
+    await host.page.goto('/')
+    await host.page.getByRole('button', { name: 'Create room' }).click()
+    await host.page.locator('#host-setup-name').fill('Host')
+    await expect(host.page.locator('#host-setup-random-playlist')).toBeChecked()
+    await host.page.locator('#host-setup-random-playlist-count').fill('2')
+    await host.page.locator('#host-setup-form').getByRole('button', { name: 'Create room' }).click()
+    await expect(host.page.locator('.room-card strong')).toHaveText(/^[A-Z0-9]{6}$/)
+    const roomCode = await host.page.locator('.room-card strong').innerText()
+
+    for (const name of ['Alice', 'Bob', 'Carol']) {
+      const player = await createClient(browser, name)
+      clients.push(player)
+      await player.page.goto('/')
+      await player.page.getByRole('button', { name: 'Join room' }).click()
+      await player.page.locator('#join-setup-name').fill(name)
+      await player.page.locator('#join-setup-room-code').fill(roomCode)
+      await player.page.locator('#join-setup-form').getByRole('button', { name: 'Join room' }).click()
+    }
+
+    const queueItems = host.page.locator('[data-role="host-queue-item"]')
+    await expect(queueItems).toHaveCount(2)
+    const originalTexts = await queueItems.locator('.host-queue-text').allTextContents()
+    expect(originalTexts.every((text) => catalogQuestionTexts.includes(text))).toBe(true)
+    for (const player of clients.slice(1)) {
+      for (const text of originalTexts) {
+        await expect(player.page.locator('body')).not.toContainText(text)
+      }
+    }
+
+    await queueItems.first().locator('[data-role="remove-host-queue-question"]').click()
+    await expect(queueItems).toHaveCount(1)
+    await host.page.locator('[data-role="add-random-question"]').click()
+    await expect(queueItems).toHaveCount(2)
+    const refilledTexts = await queueItems.locator('.host-queue-text').allTextContents()
+    expect(refilledTexts).not.toContain(originalTexts[0])
+
+    const firstQuestion = refilledTexts[0]
+    await host.page.locator('[data-role="start-round"]').click()
+    for (const player of clients.slice(1)) {
+      await expect(player.page.locator('.player-answer-panel h1')).toHaveText(firstQuestion)
+    }
+  } finally {
+    for (const questionId of createdQuestionIds) {
+      await host.context.request.delete(`${apiURL}/admin/questions/${questionId}`).catch(() => {})
+    }
     await Promise.all(clients.map((client) => client.context.close()))
   }
 })

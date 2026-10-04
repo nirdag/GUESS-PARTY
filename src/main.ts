@@ -136,6 +136,8 @@ type RoomState = {
   suggestedQuestions: SuggestionEntry[]
   mySuggestedQuestions: SuggestionEntry[]
   questionPoolMode?: boolean
+  randomPlaylistMode?: boolean
+  randomPlaylistTargetCount?: number
   hostQuestionQueue?: HostQueuedQuestion[]
   hostQuestionQueueCount?: number
   currentHostQuestionIndex?: number
@@ -277,6 +279,8 @@ const state = {
   customQuestion: '',
   hostQuestionQueue: [] as HostQueuedQuestion[],
   hostQuestionQueueCount: 0,
+  randomPlaylistMode: true,
+  randomPlaylistTargetCount: 10,
   currentHostQuestionIndex: 0,
   hostQueueDraft: '',
   hostQueueError: '',
@@ -676,6 +680,8 @@ function applyRoomState(serverState: Partial<RoomState>): void {
   state.suggestedQuestions = serverState.suggestedQuestions ?? state.suggestedQuestions
   state.mySuggestedQuestions = serverState.mySuggestedQuestions ?? state.mySuggestedQuestions
   state.questionPoolMode = serverState.questionPoolMode ?? state.questionPoolMode
+  state.randomPlaylistMode = serverState.randomPlaylistMode ?? state.randomPlaylistMode
+  state.randomPlaylistTargetCount = serverState.randomPlaylistTargetCount ?? state.randomPlaylistTargetCount
   state.hostQuestionQueue = serverState.hostQuestionQueue ?? state.hostQuestionQueue
   state.hostQuestionQueueCount = serverState.hostQuestionQueueCount ?? state.hostQuestionQueue.length
   state.currentHostQuestionIndex = serverState.currentHostQuestionIndex ?? state.currentHostQuestionIndex
@@ -902,7 +908,7 @@ function renderGuessIntroOverlay(): string {
   `
 }
 
-function createRoomSession(name: string, language: LanguageCode, avatar: string, guessTimeoutSeconds: number, addSelfAsPlayer: boolean, allowPlayerSuggestions: boolean, questionPoolMode: boolean = false, guessFlowMode: GuessFlowMode = 'sequential'): void {
+function createRoomSession(name: string, language: LanguageCode, avatar: string, guessTimeoutSeconds: number, addSelfAsPlayer: boolean, allowPlayerSuggestions: boolean, questionPoolMode: boolean = false, guessFlowMode: GuessFlowMode = 'sequential', randomPlaylistMode: boolean = true, randomPlaylistCount: number = 10): void {
   const nextName = name.trim() || t('prompts.defaultHostName')
   state.playerName = nextName
   state.role = 'host'
@@ -911,6 +917,8 @@ function createRoomSession(name: string, language: LanguageCode, avatar: string,
   state.guessTimeoutSeconds = guessTimeoutSeconds
   state.addSelfAsPlayer = addSelfAsPlayer
   state.questionPoolMode = questionPoolMode
+  state.randomPlaylistMode = !questionPoolMode && randomPlaylistMode
+  state.randomPlaylistTargetCount = randomPlaylistCount
   state.guessFlowMode = guessFlowMode
   // Mutually exclusive with host-as-player or question pool mode:
   state.allowPlayerSuggestions = (addSelfAsPlayer || questionPoolMode) ? false : allowPlayerSuggestions
@@ -920,12 +928,12 @@ function createRoomSession(name: string, language: LanguageCode, avatar: string,
   state.screen = 'lobby'
 
   if (socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds, addSelfAsPlayer, allowPlayerSuggestions: state.allowPlayerSuggestions, questionPoolMode, guessFlowMode }))
+    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds, addSelfAsPlayer, allowPlayerSuggestions: state.allowPlayerSuggestions, questionPoolMode, randomPlaylistMode: state.randomPlaylistMode, randomPlaylistCount, guessFlowMode }))
     return
   }
 
   queuedAction = () => {
-    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds, addSelfAsPlayer, allowPlayerSuggestions: state.allowPlayerSuggestions, questionPoolMode, guessFlowMode }))
+    socket.send(JSON.stringify({ type: 'create-room', name: nextName, roomCode: state.roomCode, language, avatar, guessTimeoutSeconds, addSelfAsPlayer, allowPlayerSuggestions: state.allowPlayerSuggestions, questionPoolMode, randomPlaylistMode: state.randomPlaylistMode, randomPlaylistCount, guessFlowMode }))
   }
 
   renderApp()
@@ -1002,7 +1010,8 @@ function startRound(): void {
 }
 
 function addHostQueueQuestion(text: string, clearDraft = true): void {
-  if (state.hostQuestionQueue.length >= MAX_HOST_QUESTION_QUEUE_LENGTH) {
+  const queueLimit = state.randomPlaylistMode ? state.randomPlaylistTargetCount : MAX_HOST_QUESTION_QUEUE_LENGTH
+  if (state.hostQuestionQueue.length >= queueLimit) {
     state.hostQueueError = t('lobby.queueFull')
     renderApp()
     return
@@ -1029,6 +1038,35 @@ function addHostQueueQuestion(text: string, clearDraft = true): void {
 
 function renderHostQuestionQueuePanel(): string {
   const queue = state.hostQuestionQueue
+  if (state.randomPlaylistMode) {
+    const targetCount = state.randomPlaylistTargetCount || 10
+    const queueFull = queue.length >= targetCount
+    return `
+      <section class="panel host-random-playlist-panel">
+        <div class="section-head">
+          <h2>${t('lobby.randomPlaylistTitle')}</h2>
+          <span>${t('lobby.questionQueueCount', { count: queue.length, max: targetCount })}</span>
+        </div>
+        <p class="subtitle">${t('lobby.randomPlaylistHint')}</p>
+        <div class="result-list host-question-queue" aria-label="${t('lobby.randomPlaylistTitle')}">
+          ${queue.length > 0
+            ? queue.map((question, index) => `
+                <div class="result-row" data-role="host-queue-item">
+                  <span class="host-queue-position">${index + 1}.</span>
+                  <span class="host-queue-text">${escapeHtml(question.text)}</span>
+                  <button class="ghost-button" type="button" data-role="remove-host-queue-question" data-question-id="${question.id}" aria-label="${t('lobby.queueRemove')}">${t('lobby.queueRemove')}</button>
+                </div>
+              `).join('')
+            : `<div class="result-row"><span>${t('lobby.randomPlaylistEmpty')}</span></div>`}
+        </div>
+        <div class="host-question-actions">
+          <button class="secondary-button" type="button" data-role="add-random-question" ${queueFull ? 'disabled' : ''}>${t('lobby.addRandomQuestion')}</button>
+        </div>
+        ${state.allowPlayerSuggestions ? renderSuggestionsPanel() : ''}
+      </section>
+    `
+  }
+
   const queueFull = queue.length >= MAX_HOST_QUESTION_QUEUE_LENGTH
   return `
     <section class="panel">
@@ -1477,6 +1515,13 @@ function renderHostSetup(): void {
           </label>
           <small class="field-hint">${t('hostSetup.allowSuggestionsHint')}</small>
           <label class="checkbox-field">
+            <input id="host-setup-random-playlist" type="checkbox" ${state.randomPlaylistMode ? 'checked' : ''} ${state.questionPoolMode ? 'disabled' : ''} />
+            <span>${t('hostSetup.randomPlaylistLabel')}</span>
+          </label>
+          <small class="field-hint">${t('hostSetup.randomPlaylistHint')}</small>
+          <label for="host-setup-random-playlist-count">${t('hostSetup.randomPlaylistCountLabel')}</label>
+          <input id="host-setup-random-playlist-count" type="number" min="1" max="10" step="1" value="${state.randomPlaylistTargetCount}" ${!state.randomPlaylistMode || state.questionPoolMode ? 'disabled' : ''} />
+          <label class="checkbox-field">
             <input id="host-setup-question-pool" type="checkbox" ${state.questionPoolMode ? 'checked' : ''} />
             <span>${t('hostSetup.questionPoolLabel')}</span>
           </label>
@@ -1576,6 +1621,8 @@ function renderHostSetup(): void {
   const addSelfCheckbox = root.querySelector<HTMLInputElement>('#host-setup-add-self')
   const allowSuggestionsCheckbox = root.querySelector<HTMLInputElement>('#host-setup-allow-suggestions')
   const questionPoolCheckbox = root.querySelector<HTMLInputElement>('#host-setup-question-pool')
+  const randomPlaylistCheckbox = root.querySelector<HTMLInputElement>('#host-setup-random-playlist')
+  const randomPlaylistCountInput = root.querySelector<HTMLInputElement>('#host-setup-random-playlist-count')
 
   const updateCheckboxStates = () => {
     if ((addSelfCheckbox?.checked || questionPoolCheckbox?.checked) && allowSuggestionsCheckbox) {
@@ -1584,6 +1631,12 @@ function renderHostSetup(): void {
       state.allowPlayerSuggestions = false
     } else if (allowSuggestionsCheckbox) {
       allowSuggestionsCheckbox.disabled = false
+    }
+    if (randomPlaylistCheckbox) {
+      randomPlaylistCheckbox.disabled = Boolean(questionPoolCheckbox?.checked)
+    }
+    if (randomPlaylistCountInput) {
+      randomPlaylistCountInput.disabled = Boolean(questionPoolCheckbox?.checked || !randomPlaylistCheckbox?.checked)
     }
   }
 
@@ -1594,7 +1647,24 @@ function renderHostSetup(): void {
   })
   questionPoolCheckbox?.addEventListener('change', () => {
     state.questionPoolMode = questionPoolCheckbox.checked
+    if (questionPoolCheckbox.checked && randomPlaylistCheckbox) {
+      randomPlaylistCheckbox.checked = false
+      state.randomPlaylistMode = false
+    }
     updateCheckboxStates()
+  })
+  randomPlaylistCheckbox?.addEventListener('change', () => {
+    state.randomPlaylistMode = randomPlaylistCheckbox.checked
+    if (randomPlaylistCheckbox.checked && questionPoolCheckbox) {
+      questionPoolCheckbox.checked = false
+      state.questionPoolMode = false
+    }
+    updateCheckboxStates()
+  })
+  randomPlaylistCountInput?.addEventListener('change', () => {
+    const parsedCount = Number(randomPlaylistCountInput.value)
+    state.randomPlaylistTargetCount = Number.isInteger(parsedCount) ? Math.min(10, Math.max(1, parsedCount)) : 10
+    randomPlaylistCountInput.value = String(state.randomPlaylistTargetCount)
   })
   allowSuggestionsCheckbox?.addEventListener('change', () => {
     state.allowPlayerSuggestions = allowSuggestionsCheckbox.checked
@@ -1607,8 +1677,10 @@ function renderHostSetup(): void {
     const addSelfAsPlayer = root.querySelector<HTMLInputElement>('#host-setup-add-self')?.checked ?? false
     const allowPlayerSuggestions = root.querySelector<HTMLInputElement>('#host-setup-allow-suggestions')?.checked ?? false
     const questionPoolMode = root.querySelector<HTMLInputElement>('#host-setup-question-pool')?.checked ?? false
+    const randomPlaylistMode = root.querySelector<HTMLInputElement>('#host-setup-random-playlist')?.checked ?? false
+    const randomPlaylistCount = Number(root.querySelector<HTMLInputElement>('#host-setup-random-playlist-count')?.value ?? state.randomPlaylistTargetCount)
     const guessFlowMode = (root.querySelector<HTMLInputElement>('input[name="host-setup-guess-flow"]:checked')?.value ?? 'sequential') as GuessFlowMode
-    createRoomSession(name, language, state.selectedAvatar, state.guessTimeoutSeconds, addSelfAsPlayer, allowPlayerSuggestions, questionPoolMode, guessFlowMode)
+    createRoomSession(name, language, state.selectedAvatar, state.guessTimeoutSeconds, addSelfAsPlayer, allowPlayerSuggestions, questionPoolMode, guessFlowMode, randomPlaylistMode, randomPlaylistCount)
   })
 }
 
@@ -2290,7 +2362,7 @@ function renderAdminGallery(): void {
 function renderSuggestionsPanel(): string {
   const queueFull = state.screen === 'lobby'
     && !state.questionPoolMode
-    && state.hostQuestionQueue.length >= MAX_HOST_QUESTION_QUEUE_LENGTH
+    && state.hostQuestionQueue.length >= (state.randomPlaylistMode ? state.randomPlaylistTargetCount : MAX_HOST_QUESTION_QUEUE_LENGTH)
   return `
     <div class="result-list suggestions-panel">
       <div class="section-head">
@@ -2704,6 +2776,10 @@ function renderLobby(): void {
 
   root.querySelector('[data-role="start-round"]')?.addEventListener('click', () => {
     startRound()
+  })
+
+  root.querySelector('[data-role="add-random-question"]')?.addEventListener('click', () => {
+    sendSocketMessage('add-random-host-queue-question', {})
   })
 
   const hostQueueTextarea = root.querySelector<HTMLTextAreaElement>('#host-queue-question')

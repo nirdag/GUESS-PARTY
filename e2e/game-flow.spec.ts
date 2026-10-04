@@ -114,6 +114,7 @@ test('host and four players can complete two live questions', async ({ browser, 
     await host.page.goto('/')
     await host.page.getByRole('button', { name: 'Create room' }).click()
     await host.page.locator('#host-setup-name').fill('Host')
+    await host.page.locator('#host-setup-random-playlist').uncheck()
     await host.page.locator('#host-setup-form').getByRole('button', { name: 'Create room' }).click()
     await expect(host.page.locator('.room-card strong')).toHaveText(/^[A-Z0-9]{6}$/)
     await expect(host.page.locator('.identity-flow-badge')).toHaveText('Sequential')

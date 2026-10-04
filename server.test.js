@@ -38,6 +38,8 @@ import {
   canDeleteSuggestion,
   canDismissSuggestion,
   canManageHostQuestionQueue,
+  initializeRandomPlaylist,
+  addRandomHostQueuedQuestion,
   addHostQueuedQuestion,
   removeHostQueuedQuestion,
   moveHostQueuedQuestion,
@@ -2066,6 +2068,85 @@ describe('HIGH: Pre-game question pool mode', () => {
 });
 
 describe('HIGH: Host question queue', () => {
+  it('initializes a language-matched random playlist up to the requested count', () => {
+    const room = createRoom({ hostName: 'Host', language: 'en' });
+    const catalog = [
+      { id: 'en-1', language: 'en', text: 'English catalog question number one?' },
+      { id: 'en-2', language: 'en', text: 'English catalog question number two?' },
+      { id: 'he-1', language: 'he', text: 'שאלה בעברית מספר אחת?' },
+    ];
+
+    initializeRandomPlaylist(room, 10, catalog);
+
+    expect(room.randomPlaylistMode).toBe(true);
+    expect(room.randomPlaylistTargetCount).toBe(10);
+    expect(room.hostQuestionQueue).toHaveLength(2);
+    expect(room.hostQuestionQueue.every((question) => question.catalogQuestionId.startsWith('en-'))).toBe(true);
+    expect(new Set(room.usedRandomQuestionIds)).toEqual(new Set(['en-1', 'en-2']));
+  });
+
+  it('keeps random playlist question IDs and pending questions host-only', () => {
+    const room = createRoom({ hostName: 'Host' });
+    const alice = addPlayerToRoom(room, 'Alice');
+    initializeRandomPlaylist(room, 1, [
+      { id: 'public-1', language: 'en', text: 'Public playlist question for the host only?' },
+    ]);
+
+    const hostState = makeRoomState(room, room.hostId);
+    const playerState = makeRoomState(room, alice.id);
+
+    expect(hostState.hostQuestionQueue[0].catalogQuestionId).toBe('public-1');
+    expect(playerState.hostQuestionQueue).toEqual([]);
+    expect(playerState).not.toHaveProperty('usedRandomQuestionIds');
+  });
+
+  it('appends an unused random question and never reuses a removed question', () => {
+    const room = createRoom({ hostName: 'Host' });
+    const catalog = [
+      { id: 'q1', language: 'en', text: 'First catalog question for this test?' },
+      { id: 'q2', language: 'en', text: 'Second catalog question for this test?' },
+      { id: 'q3', language: 'en', text: 'Third catalog question for this test?' },
+    ];
+    initializeRandomPlaylist(room, 2, catalog);
+    const removed = room.hostQuestionQueue[0];
+    removeHostQueuedQuestion(room, room.hostId, removed.id);
+
+    const added = addRandomHostQueuedQuestion(room, room.hostId, catalog);
+
+    expect(added).not.toBeNull();
+    expect(added.catalogQuestionId).not.toBe(removed.catalogQuestionId);
+    expect(room.hostQuestionQueue).toHaveLength(2);
+    expect(room.usedRandomQuestionIds).toContain(removed.catalogQuestionId);
+  });
+
+  it('restricts random playlist changes to its host in the lobby and its selected target count', () => {
+    const room = createRoom({ hostName: 'Host' });
+    const alice = addPlayerToRoom(room, 'Alice');
+    const catalog = [
+      { id: 'q1', language: 'en', text: 'First catalog question for this test?' },
+      { id: 'q2', language: 'en', text: 'Second catalog question for this test?' },
+    ];
+    initializeRandomPlaylist(room, 1, catalog);
+
+    expect(addRandomHostQueuedQuestion(room, alice.id, catalog)).toBeNull();
+    expect(addRandomHostQueuedQuestion(room, room.hostId, catalog)).toBeNull();
+    expect(addHostQueuedQuestion(room, room.hostId, 'Manual addition is disabled in random mode?')).toBeNull();
+    removeHostQueuedQuestion(room, room.hostId, room.hostQuestionQueue[0].id);
+    expect(addHostQueuedQuestion(room, room.hostId, 'Host-selected suggestion fills the open playlist slot?')).not.toBeNull();
+    room.phase = 'answer-collection';
+    expect(addRandomHostQueuedQuestion(room, room.hostId, catalog)).toBeNull();
+  });
+
+  it('leaves an empty playlist empty when the public catalog has no usable questions', () => {
+    const room = createRoom({ hostName: 'Host' });
+
+    initializeRandomPlaylist(room, 5, []);
+
+    expect(room.hostQuestionQueue).toEqual([]);
+    expect(canStartGame(room)).toBe(false);
+    expect(addRandomHostQueuedQuestion(room, room.hostId, [])).toBeNull();
+  });
+
   it('allows only the host to add, remove, and reorder valid questions in the lobby', () => {
     const room = createRoom({ hostName: 'Host' });
     const alice = addPlayerToRoom(room, 'Alice');

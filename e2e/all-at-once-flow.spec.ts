@@ -35,6 +35,7 @@ test('all-at-once guessing mode: full matching board flow with rank-based scorin
 
     // Opt into the all-at-once guessing flow instead of the default one-at-a-time flow.
     await host.page.locator('input[name="host-setup-guess-flow"][value="allAtOnce"]').check()
+    await host.page.locator('#host-setup-random-playlist').uncheck()
 
     await host.page.locator('#host-setup-form').getByRole('button', { name: 'Create room' }).click()
     await expect(host.page.locator('.room-card strong')).toHaveText(/^[A-Z0-9]{6}$/)

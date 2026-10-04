@@ -64,6 +64,7 @@ test('players can suggest questions privately and the host can use, dismiss, wit
     await host.page.goto('/')
     await host.page.getByRole('button', { name: 'Create room' }).click()
     await host.page.locator('#host-setup-name').fill('Host')
+    await host.page.locator('#host-setup-random-playlist').uncheck()
 
     // Mutual exclusivity: "play as a participant" disables/unchecks "allow players to suggest questions".
     await host.page.locator('#host-setup-add-self').check()
