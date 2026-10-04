@@ -194,7 +194,7 @@
   "adminGallery.emptyState": "אין עדיין שאלות לשפה זו.",
   "adminGallery.back": "חזרה",
   "adminGallery.translateButton": "תרגם",
-  "adminGallery.linkedBadge": "קיים תרגום מקושר",
+  "adminGallery.linkedBadge": "מקושר",
   "adminGallery.translationLoading": "מתרגם...",
   "adminGallery.translationPreviewTitle": "תרגום ({language}) — בדוק וערוך לפני השמירה",
   "adminGallery.translationNotConfiguredWarning": "התרגום אינו זמין כרגע. ניתן להקליד את התרגום ידנית למטה.",

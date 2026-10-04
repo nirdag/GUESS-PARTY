@@ -194,7 +194,7 @@
   "adminGallery.emptyState": "No questions yet for this language.",
   "adminGallery.back": "Back",
   "adminGallery.translateButton": "Translate",
-  "adminGallery.linkedBadge": "Linked translation exists",
+  "adminGallery.linkedBadge": "Linked",
   "adminGallery.translationLoading": "Translating...",
   "adminGallery.translationPreviewTitle": "Translation ({language}) — review and edit before saving",
   "adminGallery.translationNotConfiguredWarning": "Translation is unavailable right now. You can type the translation manually below.",

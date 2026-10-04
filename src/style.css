@@ -771,10 +771,22 @@ h1 {
   color: var(--muted);
 }
 
+.result-row > span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .admin-question-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  flex: 0 0 auto;
+}
+
+.admin-question-actions .chip,
+.admin-question-actions button {
+  white-space: nowrap;
 }
 
 .admin-translation-box {
