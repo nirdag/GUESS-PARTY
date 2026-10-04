@@ -2086,6 +2086,25 @@ describe('HIGH: Host question queue', () => {
     expect(room.hostQuestionQueue).toEqual([first]);
   });
 
+  it('caps the host question queue at ten and allows another after removal', () => {
+    const room = createRoom({ hostName: 'Host' });
+    const queuedQuestions = [];
+
+    for (let index = 0; index < 10; index += 1) {
+      const question = addHostQueuedQuestion(room, room.hostId, `What is a favorite thing number ${index}?`);
+      expect(question).not.toBeNull();
+      queuedQuestions.push(question);
+    }
+
+    expect(room.hostQuestionQueue).toHaveLength(10);
+    expect(addHostQueuedQuestion(room, room.hostId, 'What is your favorite thing number eleven?')).toBeNull();
+    expect(room.hostQuestionQueue).toHaveLength(10);
+
+    removeHostQueuedQuestion(room, room.hostId, queuedQuestions[0].id);
+    expect(addHostQueuedQuestion(room, room.hostId, 'What is your favorite thing number eleven?')).not.toBeNull();
+    expect(room.hostQuestionQueue).toHaveLength(10);
+  });
+
   it('exposes the queued questions only to the host and requires one to start', () => {
     const room = createRoom({ hostName: 'Host' });
     addPlayerToRoom(room, 'Alice');

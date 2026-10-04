@@ -108,6 +108,55 @@ test('host queues gallery and custom questions, edits order, and plays them as a
   }
 })
 
+test('host question queue stops at ten and allows additions after removing one', async ({ browser }) => {
+  const clients: Client[] = []
+  const host = await createClient(browser, 'Host')
+  clients.push(host)
+
+  try {
+    await host.page.goto('/')
+    await host.page.getByRole('button', { name: 'Create room' }).click()
+    await host.page.locator('#host-setup-name').fill('Host')
+    await host.page.locator('#host-setup-form').getByRole('button', { name: 'Create room' }).click()
+    await expect(host.page.locator('.room-card strong')).toHaveText(/^[A-Z0-9]{6}$/)
+    const roomCode = await host.page.locator('.room-card strong').innerText()
+
+    for (const name of ['Alice', 'Bob', 'Carol']) {
+      const player = await createClient(browser, name)
+      clients.push(player)
+      await player.page.goto('/')
+      await player.page.getByRole('button', { name: 'Join room' }).click()
+      await player.page.locator('#join-setup-name').fill(name)
+      await player.page.locator('#join-setup-room-code').fill(roomCode)
+      await player.page.locator('#join-setup-form').getByRole('button', { name: 'Join room' }).click()
+    }
+
+    const queuePanel = host.page.locator('section.panel').filter({ has: host.page.locator('#host-question-queue-form') })
+    for (let index = 1; index <= 10; index += 1) {
+      await host.page.locator('#host-queue-question').fill(`What is a favorite thing number ${index}?`)
+      await host.page.locator('#host-question-queue-form').getByRole('button', { name: 'Add question' }).click()
+      await expect(host.page.locator('[data-role="host-queue-item"]')).toHaveCount(index)
+    }
+
+    await expect(queuePanel.locator('.section-head span')).toHaveText('10/10 questions')
+    await expect(host.page.locator('[data-role="host-queue-error"]')).toHaveText('The question queue is full (10 questions maximum).')
+    await expect(host.page.locator('#host-queue-question')).toBeDisabled()
+    await expect(host.page.locator('#host-question-queue-form').getByRole('button', { name: 'Add question' })).toBeDisabled()
+    await expect(host.page.locator('[data-role="browse-gallery"]')).toBeDisabled()
+
+    await host.page.locator('[data-role="remove-host-queue-question"]').first().click()
+    await expect(host.page.locator('[data-role="host-queue-item"]')).toHaveCount(9)
+    await expect(queuePanel.locator('.section-head span')).toHaveText('9/10 questions')
+    await expect(host.page.locator('#host-queue-question')).toBeEnabled()
+
+    await host.page.locator('#host-queue-question').fill('What is another favorite thing to share?')
+    await host.page.locator('#host-question-queue-form').getByRole('button', { name: 'Add question' }).click()
+    await expect(host.page.locator('[data-role="host-queue-item"]')).toHaveCount(10)
+  } finally {
+    await Promise.all(clients.map((client) => client.context.close()))
+  }
+})
+
 test('host-as-player answers queued questions and keeps host round controls', async ({ browser }) => {
   const clients: Client[] = []
   const host = await createClient(browser, 'Host')

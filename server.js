@@ -77,6 +77,7 @@ const reconnectGracePeriodMs = 30 * 60 * 1000;
 const GUESS_TIMEOUT_SECONDS = 20;
 const MIN_GUESS_TIMEOUT_SECONDS = 20;
 const MAX_GUESS_TIMEOUT_SECONDS = 60;
+const MAX_HOST_QUESTION_QUEUE_LENGTH = 10;
 // Celebratory "get ready to guess" countdown played before the real per-answer guess timer is armed.
 const GUESS_COUNTDOWN_MS = 4000;
 // Points for a correct guess by arrival order (1st correct guess, 2nd, ...); last value is the floor for the rest.
@@ -228,6 +229,9 @@ function canManageHostQuestionQueue(room, playerId) {
 
 function addHostQueuedQuestion(room, playerId, text) {
   if (!canManageHostQuestionQueue(room, playerId)) {
+    return null;
+  }
+  if (room.hostQuestionQueue.length >= MAX_HOST_QUESTION_QUEUE_LENGTH) {
     return null;
   }
   const trimmed = String(text || '').trim();

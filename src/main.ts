@@ -6,6 +6,7 @@ type Role = 'host' | 'player'
 type Screen = 'welcome' | 'membership' | 'host-setup' | 'join-setup' | 'lobby' | 'host-managing' | 'player-answering' | 'player-guessing' | 'matching-board' | 'round-end' | 'game-end' | 'admin-login' | 'admin-gallery' | 'ask-question' | 'waiting-for-question'
 
 type GuessFlowMode = 'sequential' | 'allAtOnce'
+const MAX_HOST_QUESTION_QUEUE_LENGTH = 10
 
 type MatchingSlot = {
   slotId: string
@@ -1001,6 +1002,12 @@ function startRound(): void {
 }
 
 function addHostQueueQuestion(text: string, clearDraft = true): void {
+  if (state.hostQuestionQueue.length >= MAX_HOST_QUESTION_QUEUE_LENGTH) {
+    state.hostQueueError = t('lobby.queueFull')
+    renderApp()
+    return
+  }
+
   const trimmed = text.trim()
   if (trimmed.length < 8 || trimmed.length > 220) {
     state.hostQueueError = t('lobby.queueQuestionLength')
@@ -1022,21 +1029,22 @@ function addHostQueueQuestion(text: string, clearDraft = true): void {
 
 function renderHostQuestionQueuePanel(): string {
   const queue = state.hostQuestionQueue
+  const queueFull = queue.length >= MAX_HOST_QUESTION_QUEUE_LENGTH
   return `
     <section class="panel">
       <div class="section-head">
         <h2>${t('lobby.questionQueueTitle')}</h2>
-        <span>${t('lobby.questionQueueCount', { count: queue.length })}</span>
+        <span>${t('lobby.questionQueueCount', { count: queue.length, max: MAX_HOST_QUESTION_QUEUE_LENGTH })}</span>
       </div>
       <form id="host-question-queue-form" class="host-question-form">
         <label for="host-queue-question">${t('lobby.questionLabel')}</label>
-        <textarea id="host-queue-question" rows="3" maxlength="220" minlength="8" placeholder="${t('lobby.questionPlaceholder')}">${escapeHtml(state.hostQueueDraft)}</textarea>
+        <textarea id="host-queue-question" rows="3" maxlength="220" minlength="8" placeholder="${t('lobby.questionPlaceholder')}" ${queueFull ? 'disabled' : ''}>${escapeHtml(state.hostQueueDraft)}</textarea>
         <div class="host-question-actions">
-          <button class="secondary-button" type="submit">${t('lobby.queueAdd')}</button>
-          <button class="ghost-button" type="button" data-role="browse-gallery">${t('lobby.browseGallery')}</button>
+          <button class="secondary-button" type="submit" ${queueFull ? 'disabled' : ''}>${t('lobby.queueAdd')}</button>
+          <button class="ghost-button" type="button" data-role="browse-gallery" ${queueFull ? 'disabled' : ''}>${t('lobby.browseGallery')}</button>
           ${state.account ? `<button class="ghost-button" type="button" data-role="save-to-gallery">${t('lobby.saveToGallery')}</button>` : ''}
         </div>
-        <p class="field-hint" role="status" data-role="host-queue-error">${escapeHtml(state.hostQueueError)}</p>
+        <p class="field-hint" role="status" data-role="host-queue-error">${escapeHtml(state.hostQueueError || (queueFull ? t('lobby.queueFull') : ''))}</p>
       </form>
       ${state.showQuestionGallery ? renderGalleryPanel() : ''}
       <div class="result-list host-question-queue" aria-label="${t('lobby.questionQueueTitle')}">
@@ -2280,6 +2288,9 @@ function renderAdminGallery(): void {
 
 // Host-only view of what players have suggested; used from the asker's lobby/ask-question panels.
 function renderSuggestionsPanel(): string {
+  const queueFull = state.screen === 'lobby'
+    && !state.questionPoolMode
+    && state.hostQuestionQueue.length >= MAX_HOST_QUESTION_QUEUE_LENGTH
   return `
     <div class="result-list suggestions-panel">
       <div class="section-head">
@@ -2292,7 +2303,7 @@ function renderSuggestionsPanel(): string {
                 <div class="result-row suggestion-row">
                   <span>${suggestion.text} <small>— ${suggestion.playerName}</small></span>
                   <div class="suggestion-actions">
-                    <button type="button" class="secondary-button" data-role="use-suggestion" data-question-text="${suggestion.text.replace(/"/g, '&quot;')}">${t('lobby.useSuggestion')}</button>
+                    <button type="button" class="secondary-button" data-role="use-suggestion" data-question-text="${suggestion.text.replace(/"/g, '&quot;')}" ${queueFull ? 'disabled' : ''}>${t('lobby.useSuggestion')}</button>
                     <button type="button" class="ghost-button" data-role="dismiss-suggestion" data-suggestion-id="${suggestion.id}">${t('lobby.dismissSuggestion')}</button>
                   </div>
                 </div>
