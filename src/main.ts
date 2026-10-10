@@ -96,6 +96,7 @@ type RoundResult = {
   guessedName: string
   correct: boolean
   points: number
+  finishOrder?: number
   answerSlot?: 'A' | 'B'
 }
 
@@ -3553,12 +3554,26 @@ function startMatchingTokenPointer(event: PointerEvent, tokenEl: HTMLButtonEleme
   window.addEventListener('pointerup', onUp)
 }
 
+function formatFinishPlace(place: number): string {
+  if (state.language !== 'en') {
+    return `#${place}`
+  }
+  const suffixes: Record<string, string> = { one: 'st', two: 'nd', few: 'rd', other: 'th' }
+  return `${place}${suffixes[new Intl.PluralRules('en', { type: 'ordinal' }).select(place)]}`
+}
+
 function renderAllAtOnceResultsTabs(): string {
+  const finishOrderByPlayer = new Map<string, number>()
+  state.roundResults.forEach((result) => {
+    if (result.guesserId && result.finishOrder) {
+      finishOrderByPlayer.set(result.guesserId, result.finishOrder)
+    }
+  })
   const resultPlayerIds = [...new Set(
     state.roundResults
       .map((result) => result.guesserId)
       .filter((playerId): playerId is string => Boolean(playerId)),
-  )]
+  )].sort((a, b) => (finishOrderByPlayer.get(a) ?? Infinity) - (finishOrderByPlayer.get(b) ?? Infinity))
   const activePlayerId = resultPlayerIds.includes(state.selectedAllAtOnceResultsPlayerId ?? '')
     ? state.selectedAllAtOnceResultsPlayerId!
     : resultPlayerIds[0]
@@ -3579,7 +3594,12 @@ function renderAllAtOnceResultsTabs(): string {
             return ''
           }
           const isActive = playerId === activePlayerId
-          return `<button class="all-at-once-results-tab ${isActive ? 'active' : ''}" type="button" role="tab" aria-selected="${isActive}" data-role="all-at-once-result-tab" data-player-id="${playerId}">${formatPlayerAvatar(player)} ${player.name}</button>`
+          const playerPoints = state.roundResults
+            .filter((result) => result.guesserId === playerId)
+            .reduce((total, result) => total + result.points, 0)
+          const finishOrder = finishOrderByPlayer.get(playerId)
+          const finishBadge = finishOrder ? `<span class="all-at-once-results-tab-place" title="${t('roundEnd.finishedPlace')}">${formatFinishPlace(finishOrder)}</span>` : ''
+          return `<button class="all-at-once-results-tab ${isActive ? 'active' : ''}" type="button" role="tab" aria-selected="${isActive}" data-role="all-at-once-result-tab" data-player-id="${playerId}">${finishBadge}${formatPlayerAvatar(player)} ${player.name} <span class="all-at-once-results-tab-points">+${playerPoints}</span></button>`
         })
         .join('')}
     </div>
@@ -3590,12 +3610,12 @@ function renderAllAtOnceResultsTabs(): string {
         <strong>${formatScore(totalPoints)}</strong>
       </div>
       <div class="result-list">
-        ${activeResults
+        ${correctFirst(activeResults)
           .map(
             (result) => `
               <div class="result-row ${result.correct ? 'success' : 'fail'}">
                 <span>${t('roundEnd.guessedPlayer', { guessed: result.guessedName })}</span>
-                <strong>${result.correct ? t('roundEnd.pointsEarned', { points: result.points }) : t('roundEnd.noPoints')}</strong>
+                ${renderResultOutcome(result)}
               </div>
             `,
           )
@@ -3603,6 +3623,16 @@ function renderAllAtOnceResultsTabs(): string {
       </div>
     </div>
   `
+}
+
+function correctFirst(results: RoundResult[]): RoundResult[] {
+  return [...results].sort((a, b) => Number(b.correct) - Number(a.correct))
+}
+
+function renderResultOutcome(result: RoundResult): string {
+  return result.correct
+    ? `<strong class="result-outcome">✅ ${t('roundEnd.correct')} ${t('roundEnd.pointsEarned', { points: result.points })}</strong>`
+    : `<strong class="result-outcome">${t('roundEnd.noPoints')}</strong>`
 }
 
 function renderRoundEnd(): void {
@@ -3680,13 +3710,15 @@ function renderRoundEnd(): void {
               .map((slot) => {
                 const author = state.players.find((player) => player.id === slot.authorId)
                 return `
-                  <div class="mini-card">
-                    <span>${t('roundEnd.answerWas')}</span>
-                    <strong>"${slot.text}"</strong>
-                  </div>
-                  <div class="mini-card">
-                    <span>${t('roundEnd.writtenBy')}</span>
-                    <strong>${author ? `${formatPlayerAvatar(author)} ${author.name}` : t('roundEnd.unknown')}</strong>
+                  <div class="mini-card round-answer-pair">
+                    <div class="round-answer-field">
+                      <span>${t('roundEnd.answerWas')}</span>
+                      <strong>"${slot.text}"</strong>
+                    </div>
+                    <div class="round-answer-field round-answer-author">
+                      <span>${t('roundEnd.writtenBy')}</span>
+                      <strong>${author ? `${formatPlayerAvatar(author)} ${author.name}` : t('roundEnd.unknown')}</strong>
+                    </div>
                   </div>
                 `
               })
@@ -3696,29 +3728,32 @@ function renderRoundEnd(): void {
               .map((answer) => {
                 const author = state.players.find((player) => player.id === state.finalMatchup?.truth?.[answer.slot])
                 return `
-                  <div class="mini-card">
-                    <span>${t('finalMatchup.answerLabel', { slot: answer.slot })}</span>
-                    <strong>"${answer.text}"</strong>
-                  </div>
-                  <div class="mini-card">
-                    <span>${t('roundEnd.writtenBy')}</span>
-                    <strong>${author ? `${formatPlayerAvatar(author)} ${author.name}` : t('roundEnd.unknown')}</strong>
+                  <div class="mini-card round-answer-pair">
+                    <div class="round-answer-field">
+                      <span>${t('finalMatchup.answerLabel', { slot: answer.slot })}</span>
+                      <strong>"${answer.text}"</strong>
+                    </div>
+                    <div class="round-answer-field round-answer-author">
+                      <span>${t('roundEnd.writtenBy')}</span>
+                      <strong>${author ? `${formatPlayerAvatar(author)} ${author.name}` : t('roundEnd.unknown')}</strong>
+                    </div>
                   </div>
                 `
               })
               .join('')
           : `
-            <div class="mini-card">
-              <span>${t('roundEnd.answerWas')}</span>
-              <strong>"${state.selectedAnswer}"</strong>
-            </div>
-
-            <div class="mini-card">
-              <span>${t('roundEnd.writtenBy')}</span>
-              <strong>${(() => {
-                const author = state.players.find((player) => player.id === state.answerAuthorId)
-                return author ? `${formatPlayerAvatar(author)} ${author.name}` : t('roundEnd.unknown')
-              })()}</strong>
+            <div class="mini-card round-answer-pair">
+              <div class="round-answer-field">
+                <span>${t('roundEnd.answerWas')}</span>
+                <strong>"${state.selectedAnswer}"</strong>
+              </div>
+              <div class="round-answer-field round-answer-author">
+                <span>${t('roundEnd.writtenBy')}</span>
+                <strong>${(() => {
+                  const author = state.players.find((player) => player.id === state.answerAuthorId)
+                  return author ? `${formatPlayerAvatar(author)} ${author.name}` : t('roundEnd.unknown')
+                })()}</strong>
+              </div>
             </div>
           `}
 
@@ -3728,12 +3763,12 @@ function renderRoundEnd(): void {
             ? renderAllAtOnceResultsTabs()
           : `
             <div class="result-list">
-              ${state.roundResults
+              ${correctFirst(state.roundResults)
                 .map(
                   (result) => `
                     <div class="result-row ${result.correct ? 'success' : 'fail'}">
                       <span>${result.answerSlot ? t('finalMatchup.guessedLine', { guesser: result.guesserName, guessed: result.guessedName, slot: result.answerSlot }) : t('roundEnd.guessedLine', { guesser: result.guesserName, guessed: result.guessedName })}</span>
-                      <strong>${result.correct ? t('roundEnd.pointsEarned', { points: result.points }) : t('roundEnd.noPoints')}</strong>
+                      ${renderResultOutcome(result)}
                     </div>
                   `,
                 )

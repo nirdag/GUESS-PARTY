@@ -293,6 +293,8 @@
   "roundEnd.unknown": "Unknown",
   "roundEnd.guessedLine": "{guesser} guessed {guessed}",
   "roundEnd.guessedPlayer": "Guessed {guessed}",
+  "roundEnd.correct": "Correct!",
+  "roundEnd.finishedPlace": "Finishing position",
   "roundEnd.pointsEarned": "+{points} pts",
   "roundEnd.noPoints": "No points",
   "roundEnd.pointsThisRound": "Points this round",

@@ -293,6 +293,8 @@
   "roundEnd.unknown": "לא ידוע",
   "roundEnd.guessedLine": "{guesser} ניחש/ה {guessed}",
   "roundEnd.guessedPlayer": "ניחש/ה את {guessed}",
+  "roundEnd.correct": "נכון!",
+  "roundEnd.finishedPlace": "מקום בסיום",
   "roundEnd.pointsEarned": "+{points} נק'",
   "roundEnd.noPoints": "ללא נקודות",
   "roundEnd.pointsThisRound": "נקודות בסבב הזה",

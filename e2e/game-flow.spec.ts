@@ -87,6 +87,26 @@ async function completeQuestion(host: Client, players: Client[], questionNumber:
     }
     await host.page.locator('[data-role="calculate-score"]').click()
     await expect(host.page.locator('[data-role="confirm-next-round"]')).toBeVisible()
+    const answerPair = host.page.locator('.round-answer-pair')
+    await expect(answerPair).toHaveCount(1)
+    const answerField = await answerPair.locator('.round-answer-field').nth(0).boundingBox()
+    const authorField = await answerPair.locator('.round-answer-field').nth(1).boundingBox()
+    expect(answerField).not.toBeNull()
+    expect(authorField).not.toBeNull()
+    expect(answerField!.x).toBeLessThan(authorField!.x)
+    expect(Math.abs(answerField!.y - authorField!.y)).toBeLessThan(1)
+    await host.page.locator('html').evaluate((element) => {
+      element.dir = 'rtl'
+    })
+    const rtlAnswerField = await answerPair.locator('.round-answer-field').nth(0).boundingBox()
+    const rtlAuthorField = await answerPair.locator('.round-answer-field').nth(1).boundingBox()
+    expect(rtlAnswerField).not.toBeNull()
+    expect(rtlAuthorField).not.toBeNull()
+    expect(rtlAnswerField!.x).toBeGreaterThan(rtlAuthorField!.x)
+    expect(Math.abs(rtlAnswerField!.y - rtlAuthorField!.y)).toBeLessThan(1)
+    await host.page.locator('html').evaluate((element) => {
+      element.dir = 'ltr'
+    })
     await expect(host.page.locator('.rounds-left')).toHaveText(`${3 - roundNumber} rounds left to play this question`)
     await checkpoint(host, `question-${questionNumber}-round-${roundNumber}-complete`)
     await confirmNextRoundForAll(host, players)

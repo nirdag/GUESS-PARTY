@@ -566,6 +566,7 @@ function calculateAllAtOnceScores(room) {
       guessedName: match.guessedName,
       correct: Boolean(slot) && match.guessedId === slot.authorId,
       points: pointsByMatch.get(match) || 0,
+      finishOrder: room.matchingConfirmedIds.indexOf(match.guesserId) + 1,
     };
   });
 

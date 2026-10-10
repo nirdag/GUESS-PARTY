@@ -134,11 +134,38 @@ test('all-at-once guessing mode: full matching board flow with rank-based scorin
     const totalScore = scoreTexts.reduce((sum, text) => sum + Number(text.replace(/\D/g, '')), 0)
     expect(totalScore).toBe(9)
 
+    const answerPairs = alice.page.locator('.round-answer-pair')
+    await expect(answerPairs).toHaveCount(3)
+    for (let index = 0; index < await answerPairs.count(); index += 1) {
+      const answerPair = answerPairs.nth(index)
+      const answerField = answerPair.locator('.round-answer-field').nth(0)
+      const authorField = answerPair.locator('.round-answer-field').nth(1)
+      const answerText = await answerField.innerText()
+      const authorName = await authorField.innerText()
+      const expectedAuthor = [...answers.entries()].find(([, text]) => answerText.includes(text))?.[0]
+      expect(expectedAuthor).toBeTruthy()
+      expect(authorName).toContain(expectedAuthor!)
+
+      const answerBox = await answerField.boundingBox()
+      const authorBox = await authorField.boundingBox()
+      expect(answerBox).not.toBeNull()
+      expect(authorBox).not.toBeNull()
+      expect(answerBox!.x).toBeLessThan(authorBox!.x)
+      expect(Math.abs(answerBox!.y - authorBox!.y)).toBeLessThan(1)
+    }
+
     // Results are grouped by guesser: every player starts on their own two guesses (their own answer is excluded)
     // and sees their round total. Clients finish in loop order (Alice, then Bob, then Carol), so Alice is the
     // fastest guesser on every slot she placed, and Bob beats Carol wherever they guessed the same slot.
     const resultTabs = alice.page.locator('[data-role="all-at-once-result-tab"]')
     await expect(resultTabs).toHaveCount(3)
+    // Clients finished in loop order, so the tabs are sorted by finishing position and badged accordingly.
+    await expect(resultTabs.nth(0)).toContainText('1st')
+    await expect(resultTabs.nth(0)).toContainText(alice.name)
+    await expect(resultTabs.nth(1)).toContainText('2nd')
+    await expect(resultTabs.nth(1)).toContainText(bob.name)
+    await expect(resultTabs.nth(2)).toContainText('3rd')
+    await expect(resultTabs.nth(2)).toContainText(carol.name)
     await expect(resultTabs.filter({ hasText: alice.name })).toHaveAttribute('aria-selected', 'true')
     await expect(alice.page.locator('.all-at-once-results-panel .result-row')).toHaveCount(2)
     await expect(alice.page.locator('.all-at-once-results-total strong')).toHaveText('4 pts')

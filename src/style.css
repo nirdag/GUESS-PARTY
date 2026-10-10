@@ -643,7 +643,7 @@ h1 {
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  padding: 2px 2px 8px;
+  padding: 12px 8px 8px;
   scrollbar-color: var(--border) transparent;
 }
 
@@ -656,6 +656,20 @@ h1 {
   padding: 9px 12px;
   font-weight: 700;
   white-space: nowrap;
+  position: relative;
+}
+
+.all-at-once-results-tab-place {
+  position: absolute;
+  top: -8px;
+  inset-inline-start: -6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--secondary);
+  color: #0f1525;
+  font-size: 0.7rem;
+  font-weight: 800;
+  line-height: 1.4;
 }
 
 .all-at-once-results-tab:hover,
@@ -673,6 +687,15 @@ h1 {
 .all-at-once-results-panel {
   display: grid;
   gap: 12px;
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.all-at-once-results-tab-points {
+  margin-inline-start: 6px;
+  color: #4ade80;
+  font-weight: 800;
 }
 
 .all-at-once-results-total {
@@ -765,6 +788,27 @@ h1 {
 
 .mini-card {
   justify-content: flex-start;
+}
+
+.round-answer-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(max-content, auto);
+  align-items: center;
+}
+
+.round-answer-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.round-answer-field strong {
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+.round-answer-author {
+  justify-self: end;
 }
 
 .mini-card span {
@@ -1372,8 +1416,12 @@ h1 {
 }
 
 .result-row.success {
-  border-color: rgba(74, 222, 128, 0.3);
-  background: rgba(74, 222, 128, 0.06);
+  border-color: rgba(74, 222, 128, 0.6);
+  background: rgba(74, 222, 128, 0.14);
+}
+
+.result-row.success .result-outcome {
+  color: #4ade80;
 }
 
 .result-row.fail {
