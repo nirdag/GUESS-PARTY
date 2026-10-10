@@ -190,6 +190,120 @@ button {
   gap: 18px;
 }
 
+.welcome-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.welcome-language-picker {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(12, 17, 29, 0.35);
+}
+
+.welcome-language-picker button {
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 11px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.welcome-language-picker button.active {
+  background: var(--primary);
+  color: white;
+}
+
+.marketing-section {
+  display: grid;
+  gap: 18px;
+  margin-top: 10px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+
+.marketing-intro {
+  display: grid;
+  gap: 8px;
+}
+
+.marketing-intro h2 {
+  font-size: clamp(1.45rem, 3vw, 2rem);
+  line-height: 1.25;
+}
+
+.marketing-grid,
+.steps-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.marketing-card {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.marketing-icon {
+  font-size: 1.5rem;
+}
+
+.marketing-card h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.marketing-card p,
+.steps-grid p {
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.steps-grid {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.steps-grid li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(124, 156, 255, 0.06);
+}
+
+.steps-grid li > span {
+  display: grid;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(124, 156, 255, 0.2);
+  color: #c7d2fe;
+  font-weight: 800;
+}
+
+.steps-grid p {
+  padding-top: 2px;
+}
+
 .membership-panel {
   width: min(100%, 540px);
   margin: 0 auto;
@@ -1502,6 +1616,15 @@ h1 {
   .hero-panel,
   .round-header {
     flex-direction: column;
+  }
+
+  .welcome-heading {
+    flex-direction: column-reverse;
+  }
+
+  .marketing-grid,
+  .steps-grid {
+    grid-template-columns: 1fr;
   }
 
   .room-card {

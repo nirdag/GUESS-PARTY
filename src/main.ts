@@ -1421,9 +1421,17 @@ function renderWelcome(): void {
   root.innerHTML = `
     <main class="shell">
       <section class="panel welcome-panel">
-        <p class="eyebrow">${t('welcome.eyebrow')}</p>
-        <h1>${t('welcome.title')}</h1>
-        <p class="subtitle">${t('welcome.subtitle')}</p>
+        <div class="welcome-heading">
+          <div>
+            <p class="eyebrow">${t('welcome.eyebrow')}</p>
+            <h1>${t('welcome.title')}</h1>
+            <p class="subtitle">${t('welcome.subtitle')}</p>
+          </div>
+          <div class="welcome-language-picker" role="group" aria-label="${t('welcome.languageLabel')}">
+            <button class="${state.language === 'he' ? 'active' : ''}" type="button" data-language="he" aria-pressed="${state.language === 'he'}">עברית</button>
+            <button class="${state.language === 'en' ? 'active' : ''}" type="button" data-language="en" aria-pressed="${state.language === 'en'}">English</button>
+          </div>
+        </div>
 
         <div class="welcome-grid">
           <button class="feature-card primary" type="button" data-role="create-room">
@@ -1448,9 +1456,59 @@ function renderWelcome(): void {
         ${!state.account
           ? `<button class="ghost-button" type="button" data-role="welcome-login-hint">${t('welcome.guestHostHint')}</button>`
           : ''}
+
+        <section class="marketing-section" aria-labelledby="welcome-about-title">
+          <div class="marketing-intro">
+            <p class="eyebrow">${t('welcome.aboutEyebrow')}</p>
+            <h2 id="welcome-about-title">${t('welcome.aboutTitle')}</h2>
+            <p class="subtitle">${t('welcome.aboutSubtitle')}</p>
+          </div>
+          <div class="marketing-grid">
+            <article class="marketing-card">
+              <span class="marketing-icon" aria-hidden="true">👋</span>
+              <h3>${t('welcome.audienceTitle')}</h3>
+              <p>${t('welcome.audienceText')}</p>
+            </article>
+            <article class="marketing-card">
+              <span class="marketing-icon" aria-hidden="true">💬</span>
+              <h3>${t('welcome.benefitsTitle')}</h3>
+              <p>${t('welcome.benefitsText')}</p>
+            </article>
+            <article class="marketing-card">
+              <span class="marketing-icon" aria-hidden="true">🎭</span>
+              <h3>${t('welcome.specialTitle')}</h3>
+              <p>${t('welcome.specialText')}</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="marketing-section how-to-play" aria-labelledby="welcome-how-title">
+          <div class="marketing-intro">
+            <p class="eyebrow">${t('welcome.howEyebrow')}</p>
+            <h2 id="welcome-how-title">${t('welcome.howTitle')}</h2>
+          </div>
+          <ol class="steps-grid">
+            <li><span>1</span><p>${t('welcome.stepOne')}</p></li>
+            <li><span>2</span><p>${t('welcome.stepTwo')}</p></li>
+            <li><span>3</span><p>${t('welcome.stepThree')}</p></li>
+          </ol>
+        </section>
       </section>
     </main>
   `
+
+  root.querySelectorAll<HTMLButtonElement>('[data-language]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const language = button.dataset.language
+      if (language !== 'he' && language !== 'en') {
+        throw new Error(`Unsupported welcome language: ${language}`)
+      }
+
+      state.language = language
+      setLanguage(language)
+      renderApp()
+    })
+  })
 
   root.querySelector('[data-role="create-room"]')?.addEventListener('click', () => {
     state.customQuestion = ''
@@ -3870,7 +3928,9 @@ function renderGameEnd(): void {
 
 function renderApp(): void {
   // Screens outside an active room are never room-scoped, so they must not inherit a previous room's language.
-  if (state.screen === 'welcome' || state.screen === 'host-setup' || state.screen === 'admin-login' || state.screen === 'admin-gallery') {
+  if (state.screen === 'welcome') {
+    setLanguage(state.language)
+  } else if (state.screen === 'host-setup' || state.screen === 'admin-login' || state.screen === 'admin-gallery') {
     setLanguage('en')
   }
 

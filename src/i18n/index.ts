@@ -18,7 +18,7 @@ export const languages: Record<LanguageCode, LanguageMeta> = {
 const dictionaries: Record<LanguageCode, Record<string, string>> = { en, he }
 
 const languageStorageKey = 'guess-party-language'
-const fallbackLanguage: LanguageCode = 'en'
+const fallbackLanguage: LanguageCode = 'he'
 
 export function isSupportedLanguage(value: string | null | undefined): value is LanguageCode {
   return Boolean(value) && Object.prototype.hasOwnProperty.call(languages, value as string)
