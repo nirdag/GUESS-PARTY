@@ -362,7 +362,7 @@ const DEV_API_PORT = import.meta.env.VITE_API_PORT || '8080'
 let socket: WebSocket
 
 function isViteDevServer(): boolean {
-  return window.location.port === '5173'
+  return import.meta.env.DEV
 }
 
 function buildSocketUrl(): string {

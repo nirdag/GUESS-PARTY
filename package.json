@@ -13,7 +13,9 @@
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
-    "test:e2e:headed": "playwright test --headed --workers=1"
+    "test:e2e:headed": "playwright test --headed --workers=1",
+    "scenario": "node scenarios/cli.mjs",
+    "scenario:ui": "node scenarios/ui.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

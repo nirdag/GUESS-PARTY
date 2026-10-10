@@ -1,5 +1,17 @@
 # Demo Mode Guide
 
+## Live scenarios (bots play a real game up to a chosen screen)
+
+```
+node scenarios/cli.mjs                      # no args: prints every <mode>:<state>
+node scenarios/cli.mjs <mode>:<state> [--seat=host|Alice|Bob|Carol] [--lang=he] [--mobile]
+                                      [--outcome=correct|wrong|none] [--host-is-player] [--visible-bots]
+node scenarios/ui.mjs                       # picker page at http://127.0.0.1:5399
+```
+
+Examples: `classic:round-end`, `allAtOnce:matching-partial --seat=Alice`, `pool:answering`, `classic:game-end --lang=he --mobile`.
+Close the opened Chrome window to end the run.
+
 The demo mode allows you to quickly visualize and test any game screen state without needing to simulate full multi-browser game flows. Perfect for styling iterations, animation testing, and UI verification.
 
 ## Quick Start
