@@ -1,6 +1,6 @@
 import './style.css'
 import QRCode from 'qrcode'
-import { type LanguageCode, getLanguage, languages, setLanguage, t } from './i18n'
+import { type LanguageCode, getLanguage, isSupportedLanguage, languages, setLanguage, t } from './i18n'
 
 type Role = 'host' | 'player'
 type Screen = 'welcome' | 'membership' | 'host-setup' | 'join-setup' | 'lobby' | 'host-managing' | 'player-answering' | 'player-guessing' | 'matching-board' | 'round-end' | 'game-end' | 'admin-login' | 'admin-gallery' | 'ask-question' | 'waiting-for-question'
@@ -400,7 +400,7 @@ function parseRoomJoinLink(): { roomCode: string; language: LanguageCode } | nul
     }
 
     // Validate and normalize language
-    const normalizedLang = (language === 'en' || language === 'he') ? language : 'en'
+    const normalizedLang: LanguageCode = isSupportedLanguage(language) ? language : 'en'
 
     // Strip the room link params from URL to prevent accidental re-sharing
     params.delete('roomCode')
@@ -1428,8 +1428,7 @@ function renderWelcome(): void {
             <p class="subtitle">${t('welcome.subtitle')}</p>
           </div>
           <div class="welcome-language-picker" role="group" aria-label="${t('welcome.languageLabel')}">
-            <button class="${state.language === 'he' ? 'active' : ''}" type="button" data-language="he" aria-pressed="${state.language === 'he'}">עברית</button>
-            <button class="${state.language === 'en' ? 'active' : ''}" type="button" data-language="en" aria-pressed="${state.language === 'en'}">English</button>
+            ${Object.values(languages).map((meta) => `<button class="${state.language === meta.code ? 'active' : ''}" type="button" data-language="${meta.code}" aria-pressed="${state.language === meta.code}" aria-label="${meta.nativeName}" title="${meta.nativeName}">${meta.flagSvg}</button>`).join('')}
           </div>
         </div>
 
@@ -1500,7 +1499,7 @@ function renderWelcome(): void {
   root.querySelectorAll<HTMLButtonElement>('[data-language]').forEach((button) => {
     button.addEventListener('click', () => {
       const language = button.dataset.language
-      if (language !== 'he' && language !== 'en') {
+      if (!isSupportedLanguage(language)) {
         throw new Error(`Unsupported welcome language: ${language}`)
       }
 
@@ -1534,10 +1533,6 @@ function renderWelcome(): void {
 }
 
 function renderHostSetup(): void {
-  const languageOptions = Object.values(languages)
-    .map((meta) => `<option value="${meta.code}" ${meta.code === state.language ? 'selected' : ''}>${t(`languages.${meta.code}`)}</option>`)
-    .join('')
-
   root.innerHTML = `
     <main class="shell">
       <section class="panel membership-panel">
@@ -1552,8 +1547,6 @@ function renderHostSetup(): void {
         <form id="host-setup-form" class="membership-form">
           <label for="host-setup-name">${t('hostSetup.nameLabel')}</label>
           <input id="host-setup-name" type="text" placeholder="${t('hostSetup.namePlaceholder')}" value="${state.playerName}" required />
-          <label for="host-setup-language">${t('hostSetup.languageLabel')}</label>
-          <select id="host-setup-language">${languageOptions}</select>
           <label>${t('hostSetup.avatarLabel')}</label>
           ${renderAvatarPicker(state.selectedAvatar)}
           <label for="host-setup-timeout-counter">${t('hostSetup.guessTimeLabel')}</label>
@@ -1646,11 +1639,6 @@ function renderHostSetup(): void {
     state.playerName = (event.target as HTMLInputElement).value
   })
 
-  // Track the pick so a later re-render (e.g. picking an avatar) doesn't revert the dropdown to English.
-  root.querySelector<HTMLSelectElement>('#host-setup-language')?.addEventListener('change', (event) => {
-    state.language = (event.target as HTMLSelectElement).value as LanguageCode
-  })
-
   // Track the pick so a later re-render (e.g. picking an avatar) doesn't revert the radio to sequential.
   root.querySelectorAll<HTMLInputElement>('input[name="host-setup-guess-flow"]').forEach((radio) => {
     radio.addEventListener('change', (event) => {
@@ -1732,7 +1720,7 @@ function renderHostSetup(): void {
   root.querySelector<HTMLFormElement>('#host-setup-form')?.addEventListener('submit', (event) => {
     event.preventDefault()
     const name = root.querySelector<HTMLInputElement>('#host-setup-name')?.value ?? ''
-    const language = (root.querySelector<HTMLSelectElement>('#host-setup-language')?.value ?? 'en') as LanguageCode
+    const language = state.language
     const addSelfAsPlayer = root.querySelector<HTMLInputElement>('#host-setup-add-self')?.checked ?? false
     const allowPlayerSuggestions = root.querySelector<HTMLInputElement>('#host-setup-allow-suggestions')?.checked ?? false
     const questionPoolMode = root.querySelector<HTMLInputElement>('#host-setup-question-pool')?.checked ?? false
@@ -3930,7 +3918,9 @@ function renderApp(): void {
   // Screens outside an active room are never room-scoped, so they must not inherit a previous room's language.
   if (state.screen === 'welcome') {
     setLanguage(state.language)
-  } else if (state.screen === 'host-setup' || state.screen === 'admin-login' || state.screen === 'admin-gallery') {
+  } else if (state.screen === 'host-setup') {
+    setLanguage(state.language)
+  } else if (state.screen === 'admin-login' || state.screen === 'admin-gallery') {
     setLanguage('en')
   }
 

@@ -18,6 +18,7 @@ const adminCredentials = {
 async function createClient(browser: Browser, name: string): Promise<Client> {
   const context = await browser.newContext()
   const page = await context.newPage()
+  await page.addInitScript(() => window.localStorage.setItem('guess-party-language', 'en'))
   await page.setViewportSize({ width: 720, height: 900 })
   return { context, page, name }
 }

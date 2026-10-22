@@ -36,6 +36,7 @@ async function createClient(browser: Browser, name: string): Promise<Client> {
   await page.setViewportSize({ width: 720, height: 900 })
   await page.addInitScript((clientName) => {
     document.title = clientName
+    window.localStorage.setItem('guess-party-language', 'en')
   }, name)
   return { context, page, name }
 }

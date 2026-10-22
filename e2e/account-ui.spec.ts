@@ -10,6 +10,7 @@ test('shows account controls below the panel and supports logout', async ({ page
   const loginResponse = await page.request.post(`${apiURL}/auth/e2e-login`, { data: credentials })
   expect(loginResponse.ok(), `${loginResponse.status()} ${await loginResponse.text()}`).toBeTruthy()
 
+  await page.addInitScript(() => window.localStorage.setItem('guess-party-language', 'en'))
   await page.goto('/')
   const accountBadge = page.locator('.account-badge')
   const welcomePanel = page.locator('.welcome-panel')

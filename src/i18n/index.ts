@@ -7,12 +7,31 @@ export type LanguageMeta = {
   code: LanguageCode
   nativeName: string
   dir: 'ltr' | 'rtl'
+  flagSvg: string
 }
 
-// Adding a new language: create src/i18n/<code>.json and register it here.
+const svg = (body: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 40" aria-hidden="true" focusable="false">${body}</svg>`
+
+const flagEn = svg(
+  '<rect width="60" height="40" fill="#012169"/>' +
+  '<path d="M0 0L60 40M60 0L0 40" stroke="#fff" stroke-width="8"/>' +
+  '<path d="M0 0L60 40M60 0L0 40" stroke="#C8102E" stroke-width="3"/>' +
+  '<path d="M30 0V40M0 20H60" stroke="#fff" stroke-width="13"/>' +
+  '<path d="M30 0V40M0 20H60" stroke="#C8102E" stroke-width="8"/>',
+)
+
+const flagHe = svg(
+  '<rect width="60" height="40" fill="#fff"/>' +
+  '<rect y="4" width="60" height="5" fill="#0038b8"/>' +
+  '<rect y="31" width="60" height="5" fill="#0038b8"/>' +
+  '<g fill="none" stroke="#0038b8" stroke-width="1.6">' +
+  '<path d="M30 12L36 23H24Z"/><path d="M30 26L24 15H36Z"/></g>',
+)
+
+// Adding a new language: create src/i18n/<code>.json and register it here (with a flag SVG).
 export const languages: Record<LanguageCode, LanguageMeta> = {
-  en: { code: 'en', nativeName: 'English', dir: 'ltr' },
-  he: { code: 'he', nativeName: 'עברית', dir: 'rtl' },
+  en: { code: 'en', nativeName: 'English', dir: 'ltr', flagSvg: flagEn },
+  he: { code: 'he', nativeName: 'עברית', dir: 'rtl', flagSvg: flagHe },
 }
 
 const dictionaries: Record<LanguageCode, Record<string, string>> = { en, he }

@@ -35,6 +35,7 @@ async function createClient(browser: Browser, name: string): Promise<Client> {
   await page.setViewportSize({ width: 720, height: 900 })
   await page.addInitScript((clientName) => {
     document.title = clientName
+    window.localStorage.setItem('guess-party-language', 'en')
   }, name)
   return { context, page, name }
 }
@@ -205,7 +206,7 @@ test('pre-game question pool gathering, host moderation, player ready confirmati
       await client.page.locator('[data-role="confirm-next-round"]').click()
     }
 
-    // firstGuesser hasn't confirmed yet, so still on round-end — overlay must not have re-appeared.
+    // firstGuesser hasn't confirmed yet, so still on round-end â€” overlay must not have re-appeared.
     await expect(firstGuesser.page.locator('[data-role="confirm-next-round"]')).toBeVisible()
     await expect(firstGuesser.page.locator('.celebration-overlay')).toHaveCount(0)
 

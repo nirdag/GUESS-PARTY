@@ -12,6 +12,7 @@ async function createClient(browser: Browser, name: string): Promise<Client> {
   await page.setViewportSize({ width: 720, height: 900 })
   await page.addInitScript((clientName) => {
     document.title = clientName
+    window.localStorage.setItem('guess-party-language', 'en')
   }, name)
   return { context, page, name }
 }
@@ -201,9 +202,9 @@ test('all-at-once mode survives a host-setup re-render when combined with host-a
 
   try {
     await host.page.goto('/')
-    await host.page.getByRole('button', { name: 'Create room' }).click()
+    await host.page.locator('[data-language="he"]').click()
+    await host.page.locator('[data-role="create-room"]').click()
     await host.page.locator('#host-setup-name').fill('Host')
-    await host.page.locator('#host-setup-language').selectOption('he')
 
     // Re-pick an avatar AFTER selecting the mode, to force a full host-setup re-render before submit.
     await host.page.locator('input[name="host-setup-guess-flow"][value="allAtOnce"]').check()
