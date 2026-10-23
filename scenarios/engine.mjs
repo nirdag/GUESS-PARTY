@@ -21,9 +21,10 @@ async function createClient(browser, name, { mobile, locale } = {}) {
       : { baseURL: WEB_URL, viewport: { width: 720, height: 900 }, locale: locale ?? 'en-US' },
   )
   const page = await context.newPage()
-  await page.addInitScript((clientName) => {
+  await page.addInitScript(({ clientName, language }) => {
     document.title = clientName
-  }, name)
+    window.localStorage.setItem('guess-party-language', language)
+  }, { clientName: name, language: locale === 'he-IL' ? 'he' : 'en' })
   return { context, page, name }
 }
 
@@ -50,11 +51,8 @@ async function createRoom(host, options) {
     throw new Error(`Host login failed: ${login.status()} ${await login.text()}`)
   }
   await page.goto('/')
-  await page.getByRole('button', { name: 'Create room' }).click()
+  await page.locator('[data-role="create-room"]').click()
   await page.locator('#host-setup-name').fill('Host')
-  if (options.lang) {
-    await page.locator('#host-setup-language').selectOption(options.lang)
-  }
   if (options.allAtOnce) {
     await page.locator('input[name="host-setup-guess-flow"][value="allAtOnce"]').check()
   }
@@ -77,7 +75,7 @@ async function createRoom(host, options) {
 async function joinRoom(client, roomCode) {
   const { page } = client
   await page.goto('/')
-  await page.getByRole('button', { name: 'Join room' }).click()
+  await page.locator('[data-role="join-room"]').click()
   await page.locator('#join-setup-name').fill(client.name)
   await page.locator('#join-setup-room-code').fill(roomCode)
   await page.locator('#join-setup-form button[type="submit"]').click()
