@@ -11,6 +11,15 @@ let tempDataDir;
 beforeAll(async () => {
   tempDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'guess-party-questions-'));
   process.env.GUESS_PARTY_DATA_DIR = tempDataDir;
+  fs.writeFileSync(path.join(tempDataDir, 'questions.json'), JSON.stringify({
+    questions: [{
+      id: 'existing-production-question',
+      language: 'en',
+      text: 'What would you choose as a destination for your dream vacation?',
+      createdAt: 1,
+      translationGroupId: 'existing-production-question',
+    }],
+  }));
   ({ createQuestionService, getTranslationTargetError, supportedLanguages } = await import('./questions.js'));
 });
 
@@ -19,6 +28,30 @@ afterAll(() => {
 });
 
 describe('questions.js: createQuestionService', () => {
+  it('seeds the public English gallery once without duplicating existing questions', () => {
+    const service = createQuestionService();
+    const englishQuestions = service.listQuestions('en');
+
+    expect(englishQuestions).toHaveLength(51);
+    expect(englishQuestions.filter((question) =>
+      question.text === 'What would you choose as a destination for your dream vacation?')).toHaveLength(1);
+    expect(englishQuestions.every((question) => question.text.length >= 8 && question.text.length <= 220)).toBe(true);
+    expect(new Set(englishQuestions.map((question) => question.text.toLocaleLowerCase('en-US'))).size)
+      .toBe(englishQuestions.length);
+    expect(service.listQuestions('he')).toEqual([]);
+  });
+
+  it('does not restore seeded questions deleted by an admin', () => {
+    const service = createQuestionService();
+    const seededQuestion = service.listQuestions('en').find((question) => question.id !== 'existing-production-question');
+
+    expect(seededQuestion).toBeDefined();
+    expect(service.deleteQuestion(seededQuestion.id)).toBe(true);
+
+    const restartedService = createQuestionService();
+    expect(restartedService.listQuestions('en').some((question) => question.id === seededQuestion.id)).toBe(false);
+  });
+
   it('addQuestion rejects unsupported languages', () => {
     const service = createQuestionService();
     const result = service.addQuestion('fr', 'A valid question text?');
