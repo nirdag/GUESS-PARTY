@@ -18,7 +18,7 @@ async function createClient(browser, name, { mobile, locale } = {}) {
   const context = await browser.newContext(
     mobile
       ? { baseURL: WEB_URL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: locale ?? 'en-US' }
-      : { baseURL: WEB_URL, viewport: { width: 720, height: 900 }, locale: locale ?? 'en-US' },
+      : { baseURL: WEB_URL, viewport: null, locale: locale ?? 'en-US' },
   )
   const page = await context.newPage()
   await page.addInitScript(({ clientName, language }) => {
