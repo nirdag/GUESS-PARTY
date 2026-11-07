@@ -6,10 +6,10 @@ type Client = {
   name: string
 }
 
-async function createClient(browser: Browser, name: string): Promise<Client> {
-  const context = await browser.newContext()
+async function createClient(browser: Browser, name: string, mobile = false): Promise<Client> {
+  const context = await browser.newContext(mobile ? { isMobile: true, hasTouch: true } : {})
   const page = await context.newPage()
-  await page.setViewportSize({ width: 720, height: 900 })
+  await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 720, height: 900 })
   await page.addInitScript((clientName) => {
     document.title = clientName
     window.localStorage.setItem('guess-party-language', 'en')
@@ -278,6 +278,85 @@ test('all-at-once mode survives a host-setup re-render when combined with host-a
     }
 
     await expect(host.page.locator('.leaderboard')).toBeVisible()
+  } finally {
+    for (const client of clients) {
+      await client.context.close().catch(() => {})
+    }
+  }
+})
+
+test('mobile pool matching keeps unmatched answers above completed matches', async ({ browser }) => {
+  const clients: Client[] = []
+  const host = await createClient(browser, 'Host')
+  clients.push(host)
+
+  try {
+    await host.page.goto('/')
+    await host.page.getByRole('button', { name: 'Create room' }).click()
+    await host.page.locator('#host-setup-name').fill(host.name)
+    await host.page.locator('input[name="host-setup-guess-flow"][value="allAtOnce"]').check()
+    await host.page.locator('#host-setup-question-pool').check()
+    await host.page.locator('#host-setup-form button[type="submit"]').click()
+    await expect(host.page.locator('.room-card strong')).toHaveText(/^[A-Z0-9]{6}$/)
+    const roomCode = await host.page.locator('.room-card strong').innerText()
+
+    for (const name of ['Alice', 'Bob', 'Carol', 'Dave', 'Eve', 'Frank']) {
+      const player = await createClient(browser, name, name === 'Alice')
+      clients.push(player)
+      await player.page.goto('/')
+      await player.page.getByRole('button', { name: 'Join room' }).click()
+      await player.page.locator('#join-setup-name').fill(name)
+      await player.page.locator('#join-setup-room-code').fill(roomCode)
+      await player.page.locator('#join-setup-form button[type="submit"]').click()
+      await expect(player.page.locator('.player-list')).toContainText(name)
+    }
+
+    const players = clients.slice(1)
+    for (const player of players) {
+      await player.page.locator('#pool-question-input').fill(`${player.name}'s favorite memory?`)
+      await player.page.locator('#pool-question-form button[type="submit"]').click()
+      await player.page.locator('[data-role="toggle-pool-ready"]').click()
+    }
+    await expect(host.page.locator('[data-role="start-round"]')).toBeEnabled()
+    await host.page.locator('[data-role="start-round"]').click()
+    for (const player of players) {
+      await player.page.locator('#player-answer').fill(`${player.name} answer`)
+      await player.page.locator('[data-role="submit-answer"]').click()
+    }
+    await expect(host.page.locator('[data-role="lock-answers"]')).toBeEnabled()
+    await host.page.locator('[data-role="lock-answers"]').click()
+
+    const alice = players[0]
+    const slots = alice.page.locator('[data-role="matching-slot"]')
+    const tokens = alice.page.locator('[data-role="matching-token"]')
+    await expect(slots).toHaveCount(5)
+    await expect(tokens).toHaveCount(5)
+    const originalIds = await slots.evaluateAll((elements) => elements.map((element) => element.getAttribute('data-slot-id')))
+    const slot = (id: string | null) => alice.page.locator(`[data-role="matching-slot"][data-slot-id="${id}"]`)
+    const slotOrder = () => slots.evaluateAll((elements) => elements.map((element) => element.getAttribute('data-slot-id')))
+
+    await tokens.first().tap()
+    await slot(originalIds[0]).tap()
+    await expect.poll(slotOrder).toEqual([...originalIds.slice(1), originalIds[0]])
+    await expect(slot(originalIds[0])).toHaveClass(/filled/)
+    await expect(tokens).toHaveCount(4)
+
+    await tokens.first().tap()
+    await slot(originalIds[2]).tap()
+    await expect.poll(slotOrder).toEqual([originalIds[1], originalIds[3], originalIds[4], originalIds[0], originalIds[2]])
+    await expect(tokens).toHaveCount(3)
+
+    await slot(originalIds[0]).locator('[data-role="remove-match"]').tap()
+    await expect.poll(slotOrder).toEqual([originalIds[0], originalIds[1], originalIds[3], originalIds[4], originalIds[2]])
+    await expect(slot(originalIds[0])).not.toHaveClass(/filled/)
+    await expect(tokens).toHaveCount(4)
+
+    while (await tokens.count() > 0) {
+      await tokens.first().tap()
+      await alice.page.locator('[data-role="matching-slot"]:not(.filled)').first().tap()
+    }
+    await expect(slots.locator('[data-role="remove-match"]')).toHaveCount(0)
+    await expect(alice.page.getByText("You're done! Waiting for the others to finish...")).toBeVisible()
   } finally {
     for (const client of clients) {
       await client.context.close().catch(() => {})

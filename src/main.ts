@@ -3413,6 +3413,11 @@ let matchingDragState: { tokenId: string; startX: number; startY: number; moved:
 
 function renderMatchingBoard(): void {
   const myUsedTokenIds = new Set(state.myMatches.map((match) => match.guessedId))
+  const myMatchesBySlot = new Map(state.myMatches.map((match) => [match.slotId, match]))
+  const orderedSlots = [
+    ...state.matchingBoard.filter((slot) => !myMatchesBySlot.has(slot.slotId)),
+    ...state.matchingBoard.filter((slot) => myMatchesBySlot.has(slot.slotId)),
+  ]
   const canEditMatches = state.matchingProgress.some((entry) => entry.playerId === state.currentPlayerId) && !state.matchingConfirmed
   const isDoneGuessing = state.matchingConfirmed
   const availableTokens = state.matchingAuthorIds
@@ -3439,9 +3444,9 @@ function renderMatchingBoard(): void {
 
         <div class="matching-board">
           <div class="matching-slots">
-          ${state.matchingBoard
+          ${orderedSlots
             .map((slot) => {
-              const mine = state.myMatches.find((match) => match.slotId === slot.slotId)
+              const mine = myMatchesBySlot.get(slot.slotId)
               const placedPlayer = mine ? state.players.find((player) => player.id === mine.guessedId) : undefined
               return `
                 <div class="matching-slot ${mine ? 'filled' : ''}" data-role="matching-slot" data-slot-id="${slot.slotId}">

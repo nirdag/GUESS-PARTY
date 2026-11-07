@@ -91,11 +91,14 @@ async function submitAnswers(participants, round = 1) {
 
 async function placeAll(client, names) {
   const slots = client.page.locator(sel.slot)
-  const texts = await slots.allInnerTexts()
-  for (const [index, text] of texts.entries()) {
+  const entries = await slots.evaluateAll((elements) => elements.map((element) => ({
+    id: element.getAttribute('data-slot-id'),
+    text: element.textContent,
+  })))
+  for (const { id, text } of entries) {
     const author = names.find((name) => text.includes(name))
     await client.page.locator(sel.token, { hasText: author }).click()
-    await slots.nth(index).click()
+    await client.page.locator(`${sel.slot}[data-slot-id="${id}"]`).click()
   }
 }
 
