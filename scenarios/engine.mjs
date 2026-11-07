@@ -89,15 +89,24 @@ async function submitAnswers(participants, round = 1) {
   }
 }
 
-async function placeAll(client, names) {
+export async function placeAll(client, names, outcome = 'correct') {
   const slots = client.page.locator(sel.slot)
   const entries = await slots.evaluateAll((elements) => elements.map((element) => ({
     id: element.getAttribute('data-slot-id'),
     text: element.textContent,
   })))
-  for (const { id, text } of entries) {
-    const author = names.find((name) => text.includes(name))
-    await client.page.locator(sel.token, { hasText: author }).click()
+  const authors = entries.map(({ text }) => names.find((name) => text.includes(name)))
+  if (entries.some(({ id }) => !id) || authors.some((author) => !author) || new Set(authors).size !== authors.length) {
+    throw new Error(`Cannot identify matching slots and authors for ${client.name}`)
+  }
+  if (outcome === 'wrong') {
+    if (authors.length < 2) {
+      throw new Error(`Cannot create incorrect matches for ${client.name} with fewer than two slots`)
+    }
+    ;[authors[0], authors[1]] = [authors[1], authors[0]]
+  }
+  for (const [index, { id }] of entries.entries()) {
+    await client.page.locator(sel.token, { hasText: authors[index] }).click()
     await client.page.locator(`${sel.slot}[data-slot-id="${id}"]`).click()
   }
 }
@@ -118,7 +127,7 @@ async function guessAll(participants, outcome) {
 }
 
 // Plays out everything left (including extra questions in pool mode) until the host sees the end-of-game controls.
-async function playToGameEnd(host, participants, everyone, names) {
+async function playToGameEnd(host, participants, everyone, names, outcome) {
   for (let i = 0; i < 400; i += 1) {
     if (await isVisible(host, sel.newGame)) {
       return
@@ -128,7 +137,7 @@ async function playToGameEnd(host, participants, everyone, names) {
         await submitAnswers([client], 'x')
       }
       if ((await client.page.locator(sel.token).count()) > 0) {
-        await placeAll(client, names)
+        await placeAll(client, names, outcome)
       }
     }
     if (await host.page.locator(sel.lock).first().isEnabled().catch(() => false)) {
@@ -239,18 +248,18 @@ export async function runScenario(opts) {
         await host.page.locator(sel.lock).click()
         await visible(participants[0], sel.slot)
       },
-      'matching-partial': async () => placeAll(participants[0], allNames),
+      'matching-partial': async () => placeAll(participants[0], allNames, outcome),
       'round-end': async () => {
         if (allAtOnce) {
           for (const client of participants.slice(1)) {
-            await placeAll(client, allNames)
+            await placeAll(client, allNames, outcome)
           }
         } else {
           await host.page.locator(sel.calc).click()
         }
         await visible(host, sel.confirm)
       },
-      'game-end': () => playToGameEnd(host, participants, everyone, allNames),
+      'game-end': () => playToGameEnd(host, participants, everyone, allNames, outcome),
     }
 
     for (const milestone of milestones) {

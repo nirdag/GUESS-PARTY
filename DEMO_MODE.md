@@ -12,6 +12,14 @@ node scenarios/ui.mjs                       # picker page at http://127.0.0.1:53
 Examples: `classic:round-end`, `allAtOnce:matching-partial --seat=Alice`, `pool:answering`, `classic:game-end --lang=he --mobile`.
 Close the opened Chrome window to end the run.
 
+For incorrect all-at-once guesses, use for example:
+
+```powershell
+npm run scenario -- poolAllAtOnce:round-end --host-is-player --outcome=wrong
+```
+
+Each completed matching board swaps two writers, leaving any other matches correct. The default is `--outcome=correct`; `--outcome=none` applies to sequential guessing.
+
 The demo mode allows you to quickly visualize and test any game screen state without needing to simulate full multi-browser game flows. Perfect for styling iterations, animation testing, and UI verification.
 
 ## Quick Start

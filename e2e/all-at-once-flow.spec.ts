@@ -1,4 +1,5 @@
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test'
+import { placeAll } from '../scenarios/engine.mjs'
 
 type Client = {
   context: BrowserContext
@@ -113,15 +114,9 @@ test('all-at-once guessing mode: full matching board flow with rank-based scorin
     await expect(alice.page.locator('[data-role="matching-slot"].filled')).toHaveCount(0)
     await expect(alice.page.locator('[data-role="matching-token"]')).toHaveCount(2)
 
-    // Bob swaps the two authors; the other players match correctly.
+    // The scenario helper swaps Bob's two authors; the default and explicit correct outcomes stay correct.
     for (const client of [alice, bob, carol]) {
-      for (const [name, text] of answers) {
-        if (name === client.name) {
-          continue
-        }
-        const guessedName = client === bob ? (name === alice.name ? carol.name : alice.name) : name
-        await placeMatchToken(client, guessedName, text)
-      }
+      await placeAll(client, playerNames, client === bob ? 'wrong' : client === carol ? 'correct' : undefined)
       await expect(client.page.locator('[data-role="matching-token"]')).toHaveCount(0)
       await expect(client.page.locator('.matching-token-drag-hint')).toHaveCount(0)
       await expect(client.page.locator('[data-role="remove-match"]')).toHaveCount(0)
@@ -168,7 +163,7 @@ test('all-at-once guessing mode: full matching board flow with rank-based scorin
     await expect(resultTabs.filter({ hasText: alice.name })).toHaveAttribute('aria-selected', 'true')
     await expect(alice.page.locator('.all-at-once-results-total strong')).toHaveText('3 pts')
     const card = (client: Client, author: string) => client.page.locator('.round-answer-pair').filter({ hasText: answers.get(author)! })
-    await expect(card(alice, 'Alice').locator('[data-role="answer-feedback"]')).toHaveText('Your answer — not guessed')
+    await expect(card(alice, 'Alice').locator('[data-role="answer-feedback"]')).toHaveText('Your answer — not eligible for points')
     await expect(card(alice, 'Bob').locator('[data-role="answer-feedback"]')).toHaveText('You guessed Bob · ✅ Correct! +2 pts')
     await expect(card(alice, 'Carol').locator('[data-role="answer-feedback"]')).toHaveText('You guessed Carol · ✅ Correct! +1 pts')
     await expect(alice.page.locator('.all-at-once-results-panel .result-row')).toHaveCount(0)
@@ -176,7 +171,7 @@ test('all-at-once guessing mode: full matching board flow with rank-based scorin
     await resultTabs.filter({ hasText: bob.name }).click()
     await expect(resultTabs.filter({ hasText: bob.name })).toHaveAttribute('aria-selected', 'true')
     await expect(alice.page.locator('.all-at-once-results-total strong')).toHaveText('0 pts')
-    await expect(card(alice, 'Bob').locator('[data-role="answer-feedback"]')).toHaveText("Bob's answer — not guessed")
+    await expect(card(alice, 'Bob').locator('[data-role="answer-feedback"]')).toHaveText("Bob's answer — not eligible for points")
     await expect(card(alice, 'Alice').locator('[data-role="answer-feedback"]')).toHaveText('Bob guessed Carol · ❌ Missed it · 0 pts')
     await expect(card(alice, 'Carol').locator('[data-role="answer-feedback"]')).toHaveText('Bob guessed Alice · ❌ Missed it · 0 pts')
     await expect(card(alice, 'Alice').locator('.round-answer-author')).toContainText('Alice')
@@ -286,7 +281,7 @@ test('all-at-once mode survives a host-setup re-render when combined with host-a
 
     await expect(host.page.locator('.leaderboard')).toBeVisible()
     await expect(host.page.locator('.round-answer-pair')).toHaveCount(3)
-    await expect(host.page.locator('.round-answer-pair').filter({ hasText: 'Host answer' }).locator('[data-role="answer-feedback"]')).toContainText('התשובה שלך')
+    await expect(host.page.locator('.round-answer-pair').filter({ hasText: 'Host answer' }).locator('[data-role="answer-feedback"]')).toHaveText('התשובה שלך — לא מזכה בנקודות')
     await expect(host.page.locator('.round-answer-pair').filter({ hasText: 'Alice answer' }).locator('[data-role="answer-feedback"]')).toContainText('ניחשת את Alice')
   } finally {
     for (const client of clients) {
@@ -361,10 +356,9 @@ test('mobile pool matching keeps unmatched answers above completed matches', asy
     await expect(slot(originalIds[0])).not.toHaveClass(/filled/)
     await expect(tokens).toHaveCount(4)
 
-    while (await tokens.count() > 0) {
-      await tokens.first().tap()
-      await alice.page.locator('[data-role="matching-slot"]:not(.filled)').first().tap()
-    }
+    await slot(originalIds[2]).locator('[data-role="remove-match"]').tap()
+    await expect(tokens).toHaveCount(5)
+    await placeAll(alice, players.map((player) => player.name), 'wrong')
     await expect(slots.locator('[data-role="remove-match"]')).toHaveCount(0)
     await expect(alice.page.getByText("You're done! Waiting for the others to finish...")).toBeVisible()
 
@@ -374,10 +368,12 @@ test('mobile pool matching keeps unmatched answers above completed matches', asy
     await host.page.locator('[data-role="force-complete-matching"]').click()
     await expect(bob.page.locator('.round-answer-pair')).toHaveCount(6)
     await expect(bob.page.locator('[data-role="all-at-once-result-tab"]').filter({ hasText: 'Bob' })).toHaveAttribute('aria-selected', 'true')
-    await expect(bob.page.locator('.round-answer-pair').filter({ hasText: 'Bob answer' }).locator('[data-role="answer-feedback"]')).toHaveText('Your answer — not guessed')
+    await expect(bob.page.locator('.round-answer-pair').filter({ hasText: 'Bob answer' }).locator('[data-role="answer-feedback"]')).toHaveText('Your answer — not eligible for points')
     await expect(bob.page.locator('.round-answer-pair').filter({ hasText: 'Alice answer' }).locator('[data-role="answer-feedback"]')).toHaveText('No submitted guess')
     await expect(bob.page.locator('.round-answer-pair.fail')).toHaveCount(0)
     await expect(alice.page.locator('.round-answer-pair')).toHaveCount(6)
+    await expect(alice.page.locator('.round-answer-pair.fail')).toHaveCount(2)
+    await expect(alice.page.locator('.round-answer-pair.success')).toHaveCount(3)
     const cardWidth = await alice.page.locator('.round-answer-pair').first().boundingBox()
     expect(cardWidth).not.toBeNull()
     expect(cardWidth!.x + cardWidth!.width).toBeLessThanOrEqual(390)
