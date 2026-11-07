@@ -113,13 +113,14 @@ test('all-at-once guessing mode: full matching board flow with rank-based scorin
     await expect(alice.page.locator('[data-role="matching-slot"].filled')).toHaveCount(0)
     await expect(alice.page.locator('[data-role="matching-token"]')).toHaveCount(2)
 
-    // Every player matches the other two answers - their own answer/name is excluded from their own board.
+    // Bob swaps the two authors; the other players match correctly.
     for (const client of [alice, bob, carol]) {
       for (const [name, text] of answers) {
         if (name === client.name) {
           continue
         }
-        await placeMatchToken(client, name, text)
+        const guessedName = client === bob ? (name === alice.name ? carol.name : alice.name) : name
+        await placeMatchToken(client, guessedName, text)
       }
       await expect(client.page.locator('[data-role="matching-token"]')).toHaveCount(0)
       await expect(client.page.locator('.matching-token-drag-hint')).toHaveCount(0)
@@ -129,11 +130,10 @@ test('all-at-once guessing mode: full matching board flow with rank-based scorin
     // Round auto-completes once everyone is done; no manual "lock"/"calculate score" step exists for this mode.
     await expect(host.page.locator('.leaderboard')).toBeVisible()
 
-    // Each answer now has only 2 eligible guessers (its author can't guess it) ranked 2/1 by placement speed ->
-    // 3 points distributed per answer, 9 points total across all 3 answers, split across the 3 players.
+    // Alice and Carol are correct on both their guesses; Bob's two swapped guesses earn no points.
     const scoreTexts = await host.page.locator('.leaderboard-row strong').allInnerTexts()
     const totalScore = scoreTexts.reduce((sum, text) => sum + Number(text.replace(/\D/g, '')), 0)
-    expect(totalScore).toBe(9)
+    expect(totalScore).toBe(5)
 
     const answerPairs = alice.page.locator('.round-answer-pair')
     await expect(answerPairs).toHaveCount(3)
@@ -155,9 +155,7 @@ test('all-at-once guessing mode: full matching board flow with rank-based scorin
       expect(Math.abs(answerBox!.y - authorBox!.y)).toBeLessThan(1)
     }
 
-    // Results are grouped by guesser: every player starts on their own two guesses (their own answer is excluded)
-    // and sees their round total. Clients finish in loop order (Alice, then Bob, then Carol), so Alice is the
-    // fastest guesser on every slot she placed, and Bob beats Carol wherever they guessed the same slot.
+    // Tabs are sorted by finishing position, and each card shows the selected player's result for that answer.
     const resultTabs = alice.page.locator('[data-role="all-at-once-result-tab"]')
     await expect(resultTabs).toHaveCount(3)
     // Clients finished in loop order, so the tabs are sorted by finishing position and badged accordingly.
@@ -168,13 +166,22 @@ test('all-at-once guessing mode: full matching board flow with rank-based scorin
     await expect(resultTabs.nth(2)).toContainText('3rd')
     await expect(resultTabs.nth(2)).toContainText(carol.name)
     await expect(resultTabs.filter({ hasText: alice.name })).toHaveAttribute('aria-selected', 'true')
-    await expect(alice.page.locator('.all-at-once-results-panel .result-row')).toHaveCount(2)
-    await expect(alice.page.locator('.all-at-once-results-total strong')).toHaveText('4 pts')
+    await expect(alice.page.locator('.all-at-once-results-total strong')).toHaveText('3 pts')
+    const card = (client: Client, author: string) => client.page.locator('.round-answer-pair').filter({ hasText: answers.get(author)! })
+    await expect(card(alice, 'Alice').locator('[data-role="answer-feedback"]')).toHaveText('Your answer — not guessed')
+    await expect(card(alice, 'Bob').locator('[data-role="answer-feedback"]')).toHaveText('You guessed Bob · ✅ Correct! +2 pts')
+    await expect(card(alice, 'Carol').locator('[data-role="answer-feedback"]')).toHaveText('You guessed Carol · ✅ Correct! +1 pts')
+    await expect(alice.page.locator('.all-at-once-results-panel .result-row')).toHaveCount(0)
 
     await resultTabs.filter({ hasText: bob.name }).click()
     await expect(resultTabs.filter({ hasText: bob.name })).toHaveAttribute('aria-selected', 'true')
-    await expect(alice.page.locator('.all-at-once-results-panel .result-row')).toHaveCount(2)
-    await expect(alice.page.locator('.all-at-once-results-total strong')).toHaveText('3 pts')
+    await expect(alice.page.locator('.all-at-once-results-total strong')).toHaveText('0 pts')
+    await expect(card(alice, 'Bob').locator('[data-role="answer-feedback"]')).toHaveText("Bob's answer — not guessed")
+    await expect(card(alice, 'Alice').locator('[data-role="answer-feedback"]')).toHaveText('Bob guessed Carol · ❌ Missed it · 0 pts')
+    await expect(card(alice, 'Carol').locator('[data-role="answer-feedback"]')).toHaveText('Bob guessed Alice · ❌ Missed it · 0 pts')
+    await expect(card(alice, 'Alice').locator('.round-answer-author')).toContainText('Alice')
+    await host.page.locator('[data-role="all-at-once-result-tab"]').filter({ hasText: bob.name }).click()
+    await expect(card(host, 'Alice').locator('[data-role="answer-feedback"]')).toHaveText('Bob guessed Carol · ❌ Missed it · 0 pts')
 
     // Another player's confirmation broadcasts room state, but must not reset Alice's selected result tab.
     await host.page.locator('[data-role="confirm-next-round"]').click()
@@ -278,6 +285,9 @@ test('all-at-once mode survives a host-setup re-render when combined with host-a
     }
 
     await expect(host.page.locator('.leaderboard')).toBeVisible()
+    await expect(host.page.locator('.round-answer-pair')).toHaveCount(3)
+    await expect(host.page.locator('.round-answer-pair').filter({ hasText: 'Host answer' }).locator('[data-role="answer-feedback"]')).toContainText('התשובה שלך')
+    await expect(host.page.locator('.round-answer-pair').filter({ hasText: 'Alice answer' }).locator('[data-role="answer-feedback"]')).toContainText('ניחשת את Alice')
   } finally {
     for (const client of clients) {
       await client.context.close().catch(() => {})
@@ -357,6 +367,20 @@ test('mobile pool matching keeps unmatched answers above completed matches', asy
     }
     await expect(slots.locator('[data-role="remove-match"]')).toHaveCount(0)
     await expect(alice.page.getByText("You're done! Waiting for the others to finish...")).toBeVisible()
+
+    // A force-completed, partial board is not a submitted guess and must not be shown as a miss.
+    const bob = players[1]
+    await placeMatchToken(bob, 'Alice', 'Alice answer')
+    await host.page.locator('[data-role="force-complete-matching"]').click()
+    await expect(bob.page.locator('.round-answer-pair')).toHaveCount(6)
+    await expect(bob.page.locator('[data-role="all-at-once-result-tab"]').filter({ hasText: 'Bob' })).toHaveAttribute('aria-selected', 'true')
+    await expect(bob.page.locator('.round-answer-pair').filter({ hasText: 'Bob answer' }).locator('[data-role="answer-feedback"]')).toHaveText('Your answer — not guessed')
+    await expect(bob.page.locator('.round-answer-pair').filter({ hasText: 'Alice answer' }).locator('[data-role="answer-feedback"]')).toHaveText('No submitted guess')
+    await expect(bob.page.locator('.round-answer-pair.fail')).toHaveCount(0)
+    await expect(alice.page.locator('.round-answer-pair')).toHaveCount(6)
+    const cardWidth = await alice.page.locator('.round-answer-pair').first().boundingBox()
+    expect(cardWidth).not.toBeNull()
+    expect(cardWidth!.x + cardWidth!.width).toBeLessThanOrEqual(390)
   } finally {
     for (const client of clients) {
       await client.context.close().catch(() => {})

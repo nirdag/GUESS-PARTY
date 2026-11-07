@@ -760,6 +760,10 @@ h1 {
   padding: 8px;
 }
 
+.round-results-section {
+  min-width: 0;
+}
+
 .all-at-once-results-tabs {
   display: flex;
   gap: 8px;
@@ -809,8 +813,39 @@ h1 {
   display: grid;
   gap: 12px;
   margin-top: 4px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
+}
+
+.all-at-once-answer-list {
+  display: grid;
+  gap: 8px;
+}
+
+.all-at-once-answer.round-answer-pair {
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+}
+
+.all-at-once-answer.success {
+  border-color: rgba(74, 222, 128, 0.6);
+  background: rgba(74, 222, 128, 0.14);
+}
+
+.all-at-once-answer.fail {
+  border-color: rgba(248, 113, 113, 0.5);
+  background: rgba(248, 113, 113, 0.08);
+}
+
+.all-at-once-answer-feedback {
+  grid-column: 1 / -1;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
+.all-at-once-answer.success .all-at-once-answer-feedback {
+  color: #4ade80;
+}
+
+.all-at-once-answer.fail .all-at-once-answer-feedback {
+  color: #fca5a5;
 }
 
 .all-at-once-results-tab-points {

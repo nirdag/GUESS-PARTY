@@ -563,6 +563,7 @@ function calculateAllAtOnceScores(room) {
     return {
       guesserId: match.guesserId,
       guesserName: guesser ? guesser.name : '',
+      slotId: match.slotId,
       guessedName: match.guessedName,
       correct: Boolean(slot) && match.guessedId === slot.authorId,
       points: pointsByMatch.get(match) || 0,

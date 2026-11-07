@@ -2453,6 +2453,16 @@ describe('HIGH: All-at-once guessing mode', () => {
     const result = room.roundResults.find((entry) => entry.guesserName === bob.name);
     expect(result.correct).toBe(false);
     expect(result.points).toBe(0);
+    for (const match of room.matches.filter((entry) => entry.guesserId === bob.id)) {
+      expect(room.roundResults).toContainEqual(expect.objectContaining({
+        guesserId: bob.id,
+        slotId: match.slotId,
+        guessedName: match.guessedName,
+        correct: false,
+        points: 0,
+      }));
+    }
+    expect(makeRoomState(room, alice.id).roundResults).toEqual(room.roundResults);
   });
 
   it('isMatchingComplete is true only once every eligible guesser has finalized their board on the final drop', () => {
@@ -2513,4 +2523,3 @@ describe('HIGH: All-at-once guessing mode', () => {
     expect(getEligibleMatcherIds(room)).not.toContain(room.hostId);
   });
 });
-
